@@ -21,7 +21,8 @@
 
 int fd = -1;           // File descriptor for open serial port
 struct termios oldtio; // Serial port settings to restore on closing
-volatile int STOP = FALSE;
+//volatile int STOP = FALSE;
+enum state {START, FLAG_RCV, A_RCV, C_RCV, BCC_OK, STOP};
 
 int openSerialPort(const char *serialPort, int baudRate);
 int closeSerialPort();
@@ -33,6 +34,8 @@ int writeBytesSerialPort(const unsigned char *bytes, int nBytes);
 // ---------------------------------------------------
 int main(int argc, char *argv[])
 {
+    enum state s = START;
+
     if (argc < 2)
     {
         printf("Incorrect program usage\n"
@@ -63,36 +66,112 @@ int main(int argc, char *argv[])
     // It must be changed in order to respect the specifications of the protocol indicated in the Lab guide.
 
     // TODO: Save the received bytes in a buffer array and print it at the end of the program.
-    int nBytesBuf = 0;
+    //int nBytesBuf = 0;
+//
+    //while (STOP == FALSE)
+    //{
+    //    // Read one byte from serial port.
+    //    // NOTE: You must check how many bytes were actually read by reading the return value.
+    //    // In this example, we assume that the byte is always read, which may not be true.
+    //    unsigned char byte;
+    //    int bytes = readByteSerialPort(&byte);
+    //    nBytesBuf += bytes;
+//
+    //    printf("var = 0x%02X\n", byte);
+//
+    //    if (nBytesBuf == 5)
+    //    {
+    //        printf("Received 5 bytes. Stop reading from serial port.\n");
+    //        STOP = TRUE;
+    //    }
+    //}
+//
+    //printf("Total bytes received: %d\n", nBytesBuf);
+//
+//
+    //unsigned char buf[BUF_SIZE] = {0};
+    //buf[0] = 0x7E;
+    //buf[1] = 0x01;
+    //buf[2] = 0x07;
+    //buf[3] = 0x01 ^ 0x07;
+    //buf[4] = 0x7E;
+    //int bytes = writeBytesSerialPort(buf, BUF_SIZE);
 
-    while (STOP == FALSE)
+    // state machine
+    
+    while (s != STOP)
     {
-        // Read one byte from serial port.
-        // NOTE: You must check how many bytes were actually read by reading the return value.
-        // In this example, we assume that the byte is always read, which may not be true.
         unsigned char byte;
-        int bytes = readByteSerialPort(&byte);
-        nBytesBuf += bytes;
-
+        readByteSerialPort(&byte);
         printf("var = 0x%02X\n", byte);
 
-        if (nBytesBuf == 5)
+        switch(s)
         {
-            printf("Received 5 bytes. Stop reading from serial port.\n");
-            STOP = TRUE;
+            case START:
+                printf("STATE: START\n");
+                if (byte == 0x7E)
+                {
+                    s = FLAG_RCV;
+                }
+                break;
+            case FLAG_RCV:
+                printf("STATE: FLAG_RCV\n");
+                if (byte == 0x03)
+                {
+                    s = A_RCV;
+                }
+                else if (byte != 0x7E)
+                {
+                    s = START;
+                }
+                break;
+            case A_RCV:
+                printf("STATE: A_RCV\n");
+                if (byte == 0x03)
+                {
+                    s = C_RCV;
+                }
+                else if (byte == 0x7E)
+                {
+                    s = FLAG_RCV;
+                }
+                else
+                {
+                    s = START;
+                }
+                break;
+            case C_RCV:
+                printf("STATE: C_RCV\n");
+                if (byte == (0x03 ^ 0x03))
+                {
+                    s = BCC_OK;
+                }
+                else if (byte == 0x7E)
+                {
+                    s = FLAG_RCV;
+                }
+                else
+                {
+                    s = START;
+                }
+                break;
+            case BCC_OK:
+                printf("STATE: BCC_OK\n");
+                if (byte == 0x7E)
+                {
+                    s = STOP;
+                }
+                else
+                {
+                    s = START;
+                }
+                break;
+            default:
+                printf("NOT A DEFINED STATE\n");
+                break;
         }
+        printf("STATE: STOP\n");
     }
-
-    printf("Total bytes received: %d\n", nBytesBuf);
-
-
-    unsigned char buf[BUF_SIZE] = {0};
-    buf[0] = 0x7E;
-    buf[1] = 0x01;
-    buf[2] = 0x07;
-    buf[3] = 0x01 ^ 0x07;
-    buf[4] = 0x7E;
-    int bytes = writeBytesSerialPort(buf, BUF_SIZE);
 
     // Close serial port
     if (closeSerialPort() < 0)
