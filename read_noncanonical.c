@@ -89,16 +89,8 @@ int main(int argc, char *argv[])
     //printf("Total bytes received: %d\n", nBytesBuf);
 //
 //
-    //unsigned char buf[BUF_SIZE] = {0};
-    //buf[0] = 0x7E;
-    //buf[1] = 0x01;
-    //buf[2] = 0x07;
-    //buf[3] = 0x01 ^ 0x07;
-    //buf[4] = 0x7E;
-    //int bytes = writeBytesSerialPort(buf, BUF_SIZE);
 
     // state machine
-    
     while (s != STOP)
     {
         unsigned char byte;
@@ -170,8 +162,17 @@ int main(int argc, char *argv[])
                 printf("NOT A DEFINED STATE\n");
                 break;
         }
-        printf("STATE: STOP\n");
     }
+    printf("STATE: STOP\n");
+    unsigned char buf[BUF_SIZE] = {0};
+    buf[0] = 0x7E;
+    buf[1] = 0x01;
+    buf[2] = 0x07;
+    buf[3] = 0x01 ^ 0x07;
+    buf[4] = 0x7E;
+    int bytes = writeBytesSerialPort(buf, BUF_SIZE);
+    printf("SENT UA\n");
+    sleep(1);
 
     // Close serial port
     if (closeSerialPort() < 0)
