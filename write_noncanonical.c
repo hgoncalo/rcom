@@ -10,6 +10,8 @@
 #include <sys/stat.h>
 #include <termios.h>
 #include <unistd.h>
+#include <signal.h>
+
 
 #define _POSIX_SOURCE 1 // POSIX compliant source
 
@@ -21,7 +23,9 @@
 
 int fd = -1;           // File descriptor for open serial port
 struct termios oldtio; // Serial port settings to restore on closing
-//volatile int STOP = FALSE;
+int alarmEnabled = FALSE;
+int alarmCount = 0;
+unsigned char buf[BUF_SIZE] = {0};
 
 enum state {START, FLAG_RCV, A_RCV, C_RCV, BCC_OK, STOP};
 
@@ -30,12 +34,34 @@ int closeSerialPort();
 int readByteSerialPort(unsigned char *byte);
 int writeBytesSerialPort(const unsigned char *bytes, int nBytes);
 
+void alarmHandler(int signal)
+{
+    alarmEnabled = FALSE;
+    alarmCount++;
+
+    printf("Alarm #%d received\n", alarmCount);
+}
+
+void writeSet()
+{
+    buf[0] = 0x7E;
+    buf[1] = 0x03;
+    buf[2] = 0x03;
+    buf[3] = buf[1] ^ buf[2];
+    buf[4] = 0x7E;
+    int bytes = writeBytesSerialPort(buf, BUF_SIZE);
+    //printf("%d bytes written to serial port\n", bytes);
+    printf("Sent SET\n");
+    // Wait until all bytes have been written to the serial port
+    sleep(1);
+}
+
+
 // ---------------------------------------------------
 // MAIN
 // ---------------------------------------------------
 int main(int argc, char *argv[])
 {
-    enum state s = START;
 
     if (argc < 2)
     {
@@ -61,34 +87,57 @@ int main(int argc, char *argv[])
 
     printf("Serial port %s opened\n", serialPort);
 
-    // Create string to send
-    unsigned char buf[BUF_SIZE] = {0};
+    enum state s = START;
 
+    // Set alarm function handler.
+    // Install the function signal to be automatically invoked when the timer expires,
+    // invoking in its turn the user function alarmHandler
+    struct sigaction act = {0};
+    act.sa_handler = &alarmHandler;
+    if (sigaction(SIGALRM, &act, NULL) == -1)
+    {
+        perror("sigaction");
+        exit(1);
+    }
 
-    // In non-canonical mode, '\n' does not end the writing.
-    // Test this condition by placing a '\n' in the middle of the buffer.
-    // The whole buffer must be sent even with the '\n'.
-    //buf[5] = '\n';
+    printf("Alarm configured\n");
 
-    buf[0] = 0x7E;
-    buf[1] = 0x03;
-    buf[2] = 0x03;
-    buf[3] = buf[1] ^ buf[2];
-    buf[4] = 0x7E;
+    unsigned char byte;
+    
 
-    int bytes = writeBytesSerialPort(buf, BUF_SIZE);
-    printf("%d bytes written to serial port\n", bytes);
+    while (alarmCount < 4)
+    {
 
-    // Wait until all bytes have been written to the serial port
-    sleep(1);
+        if (alarmEnabled == FALSE)
+        {
+            writeSet();
+            alarm(3); // Set alarm to be triggered in 3s
+            alarmEnabled = TRUE;
+        }
+        else if (alarmEnabled == TRUE)
+        {
+            int bytesRead = readByteSerialPort(&byte);
+            if (bytesRead > 0)
+            {
+                printf("var = 0x%02X\n", byte);
+                printf("EXITED ALARM");
+                alarmEnabled = FALSE;
+                alarmCount = 0;
+                break;
+            }
+        }
 
-    int nBytesBuf = 0;
+        // in the end, the alarm_handle() disabled alarmEnabled again, meaning 3 seconds have passed
+        // try again for 3 more times
+    }
+    if (alarmCount == 4)
+    {
+        printf("ALL 4 TRIES FAILED!");
+        return 0;
+    }
+
     while (s != STOP)
     {
-        unsigned char byte;
-        readByteSerialPort(&byte);
-        printf("var = 0x%02X\n", byte);
-
         switch(s)
         {
             case START:
@@ -154,8 +203,11 @@ int main(int argc, char *argv[])
                 printf("NOT A DEFINED STATE\n");
                 break;
         }
+        readByteSerialPort(&byte);
+        printf("var = 0x%02X\n", byte);
     }
     printf("STATE: STOP\n");
+
     
 
     // Close serial port
