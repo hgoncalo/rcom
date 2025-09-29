@@ -21,7 +21,9 @@
 
 int fd = -1;           // File descriptor for open serial port
 struct termios oldtio; // Serial port settings to restore on closing
-volatile int STOP = FALSE;
+//volatile int STOP = FALSE;
+
+enum state {START, FLAG_RCV, A_RCV, C_RCV, BCC_OK, STOP};
 
 int openSerialPort(const char *serialPort, int baudRate);
 int closeSerialPort();
@@ -33,6 +35,8 @@ int writeBytesSerialPort(const unsigned char *bytes, int nBytes);
 // ---------------------------------------------------
 int main(int argc, char *argv[])
 {
+    enum state s = START;
+
     if (argc < 2)
     {
         printf("Incorrect program usage\n"
@@ -60,10 +64,6 @@ int main(int argc, char *argv[])
     // Create string to send
     unsigned char buf[BUF_SIZE] = {0};
 
-    //for (int i = 0; i < BUF_SIZE; i++)
-    //{
-    //    buf[i] = 'a' + i % 26;
-    //}
 
     // In non-canonical mode, '\n' does not end the writing.
     // Test this condition by placing a '\n' in the middle of the buffer.
@@ -83,25 +83,80 @@ int main(int argc, char *argv[])
     sleep(1);
 
     int nBytesBuf = 0;
-    while (STOP == FALSE)
+    while (s != STOP)
     {
-        // Read one byte from serial port.
-        // NOTE: You must check how many bytes were actually read by reading the return value.
-        // In this example, we assume that the byte is always read, which may not be true.
         unsigned char byte;
-        int bytes = readByteSerialPort(&byte);
-        nBytesBuf += bytes;
-
+        readByteSerialPort(&byte);
         printf("var = 0x%02X\n", byte);
 
-        if (nBytesBuf == 5)
+        switch(s)
         {
-            printf("Received 5 bytes. Stop reading from serial port.\n");
-            STOP = TRUE;
+            case START:
+                printf("STATE: START\n");
+                if (byte == 0x7E)
+                {
+                    s = FLAG_RCV;
+                }
+                break;
+            case FLAG_RCV:
+                printf("STATE: FLAG_RCV\n");
+                if (byte == 0x01)
+                {
+                    s = A_RCV;
+                }
+                else if (byte != 0x7E)
+                {
+                    s = START;
+                }
+                break;
+            case A_RCV:
+                printf("STATE: A_RCV\n");
+                if (byte == 0x07)
+                {
+                    s = C_RCV;
+                }
+                else if (byte == 0x7E)
+                {
+                    s = FLAG_RCV;
+                }
+                else
+                {
+                    s = START;
+                }
+                break;
+            case C_RCV:
+                printf("STATE: C_RCV\n");
+                if (byte == (0x01 ^ 0x07))
+                {
+                    s = BCC_OK;
+                }
+                else if (byte == 0x7E)
+                {
+                    s = FLAG_RCV;
+                }
+                else
+                {
+                    s = START;
+                }
+                break;
+            case BCC_OK:
+                printf("STATE: BCC_OK\n");
+                if (byte == 0x7E)
+                {
+                    s = STOP;
+                }
+                else
+                {
+                    s = START;
+                }
+                break;
+            default:
+                printf("NOT A DEFINED STATE\n");
+                break;
         }
     }
-
-    printf("Total bytes received: %d\n", nBytesBuf);
+    printf("STATE: STOP\n");
+    
 
     // Close serial port
     if (closeSerialPort() < 0)
