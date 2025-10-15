@@ -1,0 +1,372 @@
+// Link layer protocol implementation
+
+#include "link_layer.h"
+#include "serial_port.h"
+
+// MISC
+#define _POSIX_SOURCE 1 // POSIX compliant source
+#define BUF_SIZE 256
+
+// MACROS
+#define FLAG 0x7E
+#define A_TX 0x03
+#define A_RX 0x01
+#define C_SET 0x03
+#define C_UA 0x07
+#define C_RR0 0xAA
+#define C_RR1 0xAB
+#define C_REJ0 0x54
+#define C_REJ1 0x55
+#define C_DISC 0x0B
+#define C_FRAME0 0x00
+#define C_FRAME1 0x80
+
+enum state {START, FLAG_RCV, A_RCV, C_RCV, BCC_OK, STOP}; 
+enum alarm_state {OPEN,WRITE};
+enum machine_state {OPEN, WRITE, READ};
+
+void writeSet();
+void writeUa();
+void alarmHandler();
+// Tx state machine
+int stateMachine();
+
+unsigned char buf[BUF_SIZE] = {0};
+int alarmEnabled = FALSE;
+int alarmCount = 0;
+
+// LLWRITE AUX FUNCTIONS
+int tx_fn; // sender's frame number (I(0) would be 0, varies between 0,1)
+int tx_buf_size = (MAX_PAYLOAD_SIZE * 2) + 6; // currently: max buffer size that will be sent (buf's data with stuffing + 6 flags), can be ajusted to only the necessary
+
+void writeSet()
+{
+    buf[0] = 0x7E;
+    buf[1] = 0x03;
+    buf[2] = 0x03;
+    buf[3] = buf[1] ^ buf[2];
+    buf[4] = 0x7E;
+    int bytes = writeBytesSerialPort(buf, BUF_SIZE);
+    //printf("Sent SET\n");
+    sleep(1);
+}
+
+void writeUa()
+{
+    buf[0] = 0x7E;
+    buf[1] = 0x01;
+    buf[2] = 0x07;
+    buf[3] = buf[1] ^ buf[2];
+    buf[4] = 0x7E;
+    int bytes = writeBytesSerialPort(buf, BUF_SIZE);
+    //printf("SENT UA\n");
+    sleep(1);
+}
+
+void writeI()
+{
+    tx_fn = buf[2];
+    writeBytesSerialPort(buf,tx_buf_size);
+    sleep(1);
+}
+
+void alarmHandler(int signal)
+{
+    alarmEnabled = FALSE;
+    alarmCount++;
+    printf("Alarm #%d received\n", alarmCount);
+}
+
+int txAlarm(unsigned char* byte, enum alarm_state as)
+{
+    while (alarmCount < 4)
+    {
+        if (alarmEnabled == FALSE)
+        {
+            switch(as)
+            {
+                case OPEN:
+                    writeSet();
+                    break;
+                case WRITE:
+                    writeI();
+                    break;
+                default:
+                    printf("NOT A DEFINED STATE\n");
+                    return 1;
+            }
+            
+            alarm(3); // Set alarm to be triggered in 3s
+            alarmEnabled = TRUE;
+        }
+        else if (alarmEnabled == TRUE)
+        {
+            int bytesRead = readByteSerialPort(&byte);
+            if (bytesRead > 0)
+            {
+                printf("var = 0x%02X\n", byte);
+                printf("EXITED ALARM");
+                alarmEnabled = FALSE;
+                alarmCount = 0;
+                break;
+            }
+        }
+        // in the end, the alarm_handle() disabled alarmEnabled again, meaning 3 seconds have passed
+        // try again for 3 more times
+    }
+    if (alarmCount == 4)
+    {
+        printf("ALL 4 TRIES FAILED!");
+        return 1;
+    }
+    else return 0;
+}
+
+int stateMachine(unsigned char* byte, enum state s, enum machine_state ms, LinkLayerRole role)
+{
+    unsigned char a,c, bcc2_acc;
+    while (s != STOP)
+    {
+        switch(s)
+        {
+            case START:
+                if (byte == 0x7E)
+                {
+                    s = FLAG_RCV;
+                }
+                break;
+            case FLAG_RCV:
+                if ((byte == 0x01 && role == LlTx) || (byte == 0x03 && role == LlRx))
+                {
+                    s = A_RCV;
+                    a = byte;
+                }
+                else if (byte != 0x7E)
+                {
+                    s = START;
+                }
+                break;
+            case A_RCV:
+                switch(ms)
+                {
+                    c = byte;
+                    case OPEN:
+                        if ((byte == 0x07 && role == LlTx) || (byte == 0x03 && role == LlRx))
+                        {
+                            s = C_RCV;
+                        }
+                        else if (byte == 0x7E)
+                        {
+                            s = FLAG_RCV;
+                        }
+                        else
+                        {
+                            s = START;
+                        }
+                        break;
+                    case WRITE: //i.e: write treats packets sent by LLREAD()
+                        if ((byte == 0xAA) || (byte == 0xAB) || (byte == 0x54) || (byte == 0x55))
+                        {
+                            s = C_RCV;
+                        }
+                        else
+                        {
+                            s = START; // houve erro, voltar ao inicio
+                        }
+                        break;
+                    case READ: // i.e: read treats packets sent by LLWRITE()
+                        if ((byte == 0x00) || (byte == 0x80))
+                        {
+                            s = C_RCV;
+                        }
+                        else
+                        {
+                            // sendREJ(), tem de enviar REJ, houve erro
+                            s = START;
+                        }
+                        break;
+                    default:
+                        printf("NOT A DEFINED STATE\n");
+                        return 1;
+                }
+            case C_RCV:
+                if (byte == (a ^ c))
+                {
+                    s = BCC_OK;
+                }
+                else if (byte == 0x7E)
+                {
+                    s = FLAG_RCV;
+                }
+                else
+                {
+                    s = START;
+                }
+                break;
+            case BCC_OK:
+                switch(ms)
+                {
+                    // open,write have the same cases
+                    case OPEN:
+                    case WRITE:
+                        if (byte == 0x7E)
+                        {
+                            s = STOP;
+                        }
+                        else
+                        {
+                            s = START;
+                        }
+                        break;
+                    case READ:
+                        // data will already be destuffed
+                        if (byte == 0x7E)
+                        {
+                            // se recebeu flag, então o acumulador chegou ao fim (o ultimo valor acumulado foi BCC2)
+                            // mas ele tb já acumulou o BCC2 estipulado/recebido
+                            // ou seja: DATA XOR BCC2, teoricamente, devia dar 0 (ou seja 1 XOR 1, daria 0), porque a XOR ACC DATA == BCC2
+                            // pelo que, se não forem iguais, o BCC2 ou a DATA estão errados (voltar ao inicio e não aceitar o frame)
+                            if (bcc2_acc == 0)
+                            {
+                                s = STOP; // BCC2_ACC = BCC2 (then OK)
+                            }
+                            else
+                            {
+                                s = START;
+                            }
+                        }
+                        else
+                        {
+                            bcc2_acc ^= *byte;
+                        }
+                        break;
+                    default:
+                        printf("NOT A DEFINED STATE\n");
+                        return 1;
+                }
+                break;
+            default:
+                printf("NOT A DEFINED STATE\n");
+                return 1;
+        }
+        readByteSerialPort(&byte);
+        //printf("var = 0x%02X\n", byte);
+    }
+    //printf("STATE: STOP\n");
+    return 0;
+}
+
+////////////////////////////////////////////////
+// LLOPEN
+////////////////////////////////////////////////
+int llopen(LinkLayer connectionParameters)
+{
+    unsigned char byte;
+    switch(connectionParameters.role)
+    {
+        const char *serialPort = connectionParameters.serialPort;
+        int baudRate = connectionParameters.baudRate;
+
+        if (openSerialPort(serialPort, baudRate) < 0)
+        {
+            perror("openSerialPort");
+            exit(-1);
+        }
+        printf("Serial port %s opened\n", serialPort);
+
+        case LlTx:
+            struct sigaction act = {0};
+            act.sa_handler = &alarmHandler;
+            if (sigaction(SIGALRM, &act, NULL) == -1)
+            {
+                perror("sigaction");
+                exit(1);
+            }
+            printf("Alarm configured\n");
+
+            // write set
+            if (txAlarm(&byte,OPEN))
+            {
+                return 1;
+            };
+
+            // read ua
+            stateMachine(&byte,START,LlTx);
+            break;
+        case LlRx:
+            // read set
+            readByteSerialPort(&byte);
+            printf("var = 0x%02X\n", byte);
+            stateMachine(&byte,START,LlRx);
+
+            // write ua
+            writeUa();
+            break;
+        default:
+            printf("Invalid role\n");
+            return 1;
+    }
+
+    return 0;
+}
+
+////////////////////////////////////////////////
+// LLWRITE
+////////////////////////////////////////////////
+int llwrite(const unsigned char *buf, int bufSize)
+{
+    unsigned char byte;
+
+    // implementar alarm e esperar pelo read (ACK)
+    struct sigaction act = {0};
+    act.sa_handler = &alarmHandler;
+    if (sigaction(SIGALRM, &act, NULL) == -1)
+    {
+        perror("sigaction");
+        exit(1);
+    }
+    printf("Alarm configured\n");
+
+    // write I and expect ACK
+    if (txAlarm(&byte,WRITE))
+    {
+        return 1;
+    }
+    // logica de verificação do byte (verificar FLAG,A,C,BCC)
+    // fazer máquina de estados again, fazer verificação com alarm_state, role
+    // ou seja, em vez das multiplas opções, maybe um switch pelo alarm_state/phase (OPEN,WRITE,READ) não era mal pensado, para distinguir o C
+
+    // Falta SendREJ(n) ou SendRR(n)
+
+    // retornar se tudo certo
+    return 0;
+}
+
+////////////////////////////////////////////////
+// LLREAD
+////////////////////////////////////////////////
+int llread(unsigned char *packet)
+{
+    // TODO: Implement this function
+
+    // verificar o pacote de information
+
+    return 0;
+}
+
+////////////////////////////////////////////////
+// LLCLOSE
+////////////////////////////////////////////////
+int llclose()
+{
+    // TODO: Implement this function
+    if (closeSerialPort() < 0)
+    {
+        perror("closeSerialPort");
+        exit(-1);
+    }
+
+    printf("Serial port %s closed\n", serialPort);
+
+    return 0;
+}

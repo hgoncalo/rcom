@@ -26,16 +26,7 @@ typedef struct
 // MISC
 #define FALSE 0
 #define TRUE 1
-#define BUF_SIZE 256
 
-enum state {START, FLAG_RCV, A_RCV, C_RCV, BCC_OK, STOP};
-
-void writeSet();
-void writeUa();
-void alarmHandler();
-
-// Tx state machine
-int stateMachine();
 
 // Open a connection using the "port" parameters defined in struct linkLayer.
 // Return 0 on success or -1 on error.
