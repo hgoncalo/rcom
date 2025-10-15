@@ -38,6 +38,7 @@ int alarmCount = 0;
 // LLWRITE AUX FUNCTIONS
 int tx_fn; // sender's frame number (I(0) would be 0, varies between 0,1)
 int tx_buf_size = (MAX_PAYLOAD_SIZE * 2) + 6; // currently: max buffer size that will be sent (buf's data with stuffing + 6 flags), can be ajusted to only the necessary
+unsigned char *tx_frame;
 
 void writeSet()
 {
@@ -65,8 +66,8 @@ void writeUa()
 
 void writeI()
 {
-    tx_fn = buf[2];
-    writeBytesSerialPort(buf,tx_buf_size);
+    tx_fn = (tx_frame[2] != 0);
+    writeBytesSerialPort(tx_frame,tx_buf_size);
     sleep(1);
 }
 
@@ -256,6 +257,7 @@ int stateMachine(unsigned char* byte, enum state s, enum machine_state ms, LinkL
     return 0;
 }
 
+
 ////////////////////////////////////////////////
 // LLOPEN
 ////////////////////////////////////////////////
@@ -285,19 +287,19 @@ int llopen(LinkLayer connectionParameters)
             printf("Alarm configured\n");
 
             // write set
-            if (txAlarm(&byte,OPEN))
+            if (txAlarm(&byte))
             {
                 return 1;
             };
 
             // read ua
-            stateMachine(&byte,START,LlTx);
+            stateMachine(&byte,START,OPEN,LlTx);
             break;
         case LlRx:
             // read set
             readByteSerialPort(&byte);
             printf("var = 0x%02X\n", byte);
-            stateMachine(&byte,START,LlRx);
+            stateMachine(&byte,START,OPEN,LlRx);
 
             // write ua
             writeUa();
@@ -315,7 +317,52 @@ int llopen(LinkLayer connectionParameters)
 ////////////////////////////////////////////////
 int llwrite(const unsigned char *buf, int bufSize)
 {
+
+    // tamanho do vetor 2*max_payload_size + 6
+    // max_payload_size é 1000
+    // caso todos os caracteres sejam flag,sera necessario fazer o byte stuffing de todos eles, o que faria com que o tamanho duplicasse
+    // a somar a tudo isto, o vetor precisa de mais 6 bytes para as flags
+
+    int countframe = 0;
+    unsigned char bcc2 = 0x00;
+
+    //CONFIGURAR AS FLAGS ANTES DO DATA
+    unsigned int frame_size = 0;
+    unsigned char frame[(2*MAX_PAYLOAD_SIZE) + 6] = {0};
+    unsigned char frame[0] = 0x7E; //flag_start
+    unsigned char frame[1] = 0x01; //Address transmiter
+
+    unsigned char c_frameN = 0x00;
+    if (countframe == 0) {
+        unsigned char frame[2] = 0x00;
+        countframe = 1;
+        unsigned char frame[3] = 0x01 ^ 0x00; //BCC1
+    } else {
+        unsigned char frame[2] = 0x80;
+        countframe = 0;
+        unsigned char frame[3] = 0x01 ^ 0x80; //BCC1
+    }
+    frame_size = 4;
+
+    //PERCORRER OS DADOS E FAZER O BYTE STUFFING
+    unsigned char currentByte;
+    for (int i=1; i<bufSize;) { //vou ler 2 de em 2 bytes
+        currentByte = buf[i];
+        bcc2 ^= currentByte;
+
+        byte_stuffing(&currentByte, &frame, &frame_size);
+    }
+
+    //ADICIONAR AS FLAGS NO FINAL
+    frame[frame_size-1] = bcc2;
+    frame[frame_size] = 0x7E;
+    frame_size += 2;
+    //O VETOR ESTA PRONTO
+
+    // Escrever Frame e Receber o READ
     unsigned char byte;
+    tx_buf_size = frame_size;
+    tx_frame = frame;
 
     // implementar alarm e esperar pelo read (ACK)
     struct sigaction act = {0};
@@ -326,7 +373,7 @@ int llwrite(const unsigned char *buf, int bufSize)
         exit(1);
     }
     printf("Alarm configured\n");
-
+    
     // write I and expect ACK
     if (txAlarm(&byte,WRITE))
     {
@@ -342,14 +389,45 @@ int llwrite(const unsigned char *buf, int bufSize)
     return 0;
 }
 
+void byte_stuffing (unsigned char *currentbyte, unsigned char *vector, unsigned int *size) {
+
+    if (*currentbyte == 0x7E) {
+        (*size) += 2;
+        vector[*size-1] = 0x7D; //ESC
+        vector[*size] = 0x5E;
+    } else if (*currentbyte == 0x7D){
+        (*size) += 2;
+        vector[*size-1] = 0x7D; //ESC
+        vector[*size] = 0x5D;
+    } else {
+        (*size)++;
+        vector[*size-1] = *currentbyte;
+    }
+}
+
 ////////////////////////////////////////////////
 // LLREAD
 ////////////////////////////////////////////////
+
+
+void byte_destuffing (unsigned char *currentbyte, unsigned char *vector, unsigned int *size) {
+    if (vector[*size-1] == 0x7D) {
+        if ((*currentbyte == 0x5E)) {
+            vector[*size-1] = 0x7E;
+        } else if (*currentbyte == 0x5D) {
+            vector[*size-1] = 0x7D;
+        }
+
+    } else {
+        (*size)++;
+        vector[*size-1] = *currentbyte;
+    }
+}
+
+
 int llread(unsigned char *packet)
 {
     // TODO: Implement this function
-
-    // verificar o pacote de information
 
     return 0;
 }
