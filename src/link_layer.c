@@ -208,7 +208,7 @@ int stateMachine(unsigned char byte, enum state s, enum machine_state ms, LinkLa
                 break;
             case FLAG_RCV:
                 a = byte;
-                // se recetor: quero ler COMANDOS (0x01) ou RESPOSTAS (0x03) do RECIEVER, se for Rx quero ler COMANDOS (0x03) ou RESPOSTAS (0x01) do TRANSMISSOR
+                // se transmissor: quero ler COMANDOS (0x01) ou RESPOSTAS (0x03) do RECIEVER, se for Rx quero ler COMANDOS (0x03) ou RESPOSTAS (0x01) do TRANSMISSOR
                 if ((byte == 0x01 && role == LlTx && type == A_COMMAND) || 
                 (byte == 0x03 && role == LlRx && type == A_COMMAND) || 
                 (byte == 0x03 && role == LlTx && type == A_REPLY) || 
@@ -389,13 +389,13 @@ int llopen(LinkLayer connectionParameters)
             };
 
             // read ua
-            stateMachine(byte,START,OPEN,x_role);
+            stateMachine(byte,START,OPEN,x_role,A_COMMAND);
             break;
         case LlRx:
             // read set
             readByteSerialPort(&byte);
-            printf("var = 0x%02X\n", byte);
-            stateMachine(&byte,START,OPEN,x_role);
+            //printf("var = 0x%02X\n", byte);
+            stateMachine(&byte,START,OPEN,x_role,A_COMMAND);
 
             // write ua
             writeUa(A_COMMAND);
@@ -547,15 +547,15 @@ int llclose()
     switch(x_role)
     {
         case LlTx:
-            // write DISC
-            writeUa(A_COMMAND);
+            // write DISC (0x03)
+            writeDisc(A_COMMAND);
 
             // read DISC + confirm
             // acabar SM para CLOSE
             readByteSerialPort(&byte);
             stateMachine(byte,START,CLOSE,x_role,A_COMMAND);
 
-            // write ua (reply to Rx)
+            // write ua (reply to Rx, 0x01) 
             writeUa(A_REPLY);
             break;
         case LlRx:
@@ -563,8 +563,8 @@ int llclose()
             readByteSerialPort(&byte);
             stateMachine(byte,START,CLOSE,x_role,A_COMMAND);
 
-            // write DISC
-            writeUa(A_COMMAND);
+            // write DISC (0x01)
+            writeDisc(A_COMMAND);
 
             // read UA + confirm
             readByteSerialPort(&byte);
