@@ -425,16 +425,16 @@ int llwrite(const unsigned char *buf, int bufSize)
     unsigned int frame_size = 0;
     unsigned char frame[(2*MAX_PAYLOAD_SIZE) + 6] = {0};
     unsigned char frame[0] = FLAG;
-    unsigned char frame[1] = A_TX;
+    unsigned char frame[1] = A_TX_C;
 
     if (countframe == 0) {
         unsigned char frame[2] = C_FRAME0;
         countframe = 1;
-        unsigned char frame[3] = A_TX ^ C_FRAME0; //BCC1
+        unsigned char frame[3] = A_TX_C ^ C_FRAME0; //BCC1
     } else {
         unsigned char frame[2] = C_FRAME1;
         countframe = 0;
-        unsigned char frame[3] = A_TX ^ C_FRAME1; //BCC1
+        unsigned char frame[3] = A_TX_C ^ C_FRAME1; //BCC1
     }
     frame_size = 4;
 
