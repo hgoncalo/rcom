@@ -424,18 +424,17 @@ int llwrite(const unsigned char *buf, int bufSize)
     //CONFIGURAR AS FLAGS ANTES DO DATA
     unsigned int frame_size = 0;
     unsigned char frame[(2*MAX_PAYLOAD_SIZE) + 6] = {0};
-    unsigned char frame[0] = FLAG; //flag_start
-    unsigned char frame[1] = 0x01; //Address transmiter
+    unsigned char frame[0] = FLAG;
+    unsigned char frame[1] = A_TX;
 
-    unsigned char c_frameN = 0x00;
     if (countframe == 0) {
-        unsigned char frame[2] = 0x00;
+        unsigned char frame[2] = C_FRAME0;
         countframe = 1;
-        unsigned char frame[3] = 0x01 ^ 0x00; //BCC1
+        unsigned char frame[3] = A_TX ^ C_FRAME0; //BCC1
     } else {
-        unsigned char frame[2] = 0x80;
+        unsigned char frame[2] = C_FRAME1;
         countframe = 0;
-        unsigned char frame[3] = 0x01 ^ 0x80; //BCC1
+        unsigned char frame[3] = A_TX ^ C_FRAME1; //BCC1
     }
     frame_size = 4;
 
@@ -485,7 +484,6 @@ int llwrite(const unsigned char *buf, int bufSize)
 }
 
 void byte_stuffing (unsigned char *currentbyte, unsigned char *vector, unsigned int *size) {
-
     if (*currentbyte == FLAG) {
         (*size) += 2;
         vector[*size-1] = 0x7D; //ESC
@@ -505,34 +503,38 @@ void byte_stuffing (unsigned char *currentbyte, unsigned char *vector, unsigned 
 ////////////////////////////////////////////////
 
 
-void byte_destuffing (unsigned char *currentbyte, unsigned char *vector, unsigned int *size) {
-    if (vector[*size-1] == 0x7D) {
-        if ((*currentbyte == 0x5E)) {
-            vector[*size-1] = FLAG;
-        } else if (*currentbyte == 0x5D) {
-            vector[*size-1] = 0x7D;
+int byte_destuffing (unsigned char *rx_packet, unsigned int *index, unsigned int *size) {
+    if (rx_packet[*index] == 0x7D) {  //se detetar 0x7D inspeciona o proximo byte
+        if (*index + 1 >= (MAX_PAYLOAD_SIZE * 2 + 6)) return -1;
+        if ((rx_packet[*index + 1] == 0x5E)) {
+            rx_packet[*size] = 0x7E;
+        } else if (rx_packet[*index + 1] == 0x5D) {
+            rx_packet[*size] = 0x7D;
         }
+        (*index) += 2;
+        (*size)++;
 
     } else {
+        rx_packet[*size] = rx_packet[*index];
         (*size)++;
-        vector[*size-1] = *currentbyte;
+        (*index)++;
+        if (rx_packet[*size - 1] == FLAG) {
+            return 1;
+        }
     }
+
+    return 0;
 }
 
 
 int llread(unsigned char *packet)
 {
-
-    // só manda Rej depois do BCC2 check
-
-    // state machine
-    stateMachine();
-
-    // call à destuffed com o pacote gerado pela SM
-    unsigned char *destuffed = byte_destuffing(rx_packet);
-    while ()
-    {
-        
+    int flag = 0;
+    unsigned int index = 1, size = 1;
+     
+    while (flag != 1) {
+        if (size >= (MAX_PAYLOAD_SIZE * 2 + 6)) return 1;
+        flag = byte_destuffing(rx_packet, &index, &size);
     }
 
     return 0;
