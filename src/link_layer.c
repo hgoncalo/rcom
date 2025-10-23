@@ -50,34 +50,26 @@ LinkLayerRole x_role;
 int tx_fn; // sender's frame number (I(0) would be 0, varies between 0,1)
 int tx_buf_size = (MAX_PAYLOAD_SIZE * 2) + 6; // currently: max buffer size that will be sent (buf's data with stuffing + 6 flags), can be ajusted to only the necessary
 unsigned char *tx_frame;
+unsigned char rx_answer;
+
+int validResponse(unsigned char byte)
+{
+    if (stateMachine(byte,START,WRITE,x_role,0)) return 1;
+    else
+    {
+        // stateMachine got an valid answer
+        if (rx_answer == C_REJ0 || rx_answer == C_REJ1)return 1;
+        else if (rx_answer == C_RR0 || rx_answer == C_RR1) return 0;
+        else return 1;
+    }
+}
 
 // LLREAD AUX
 unsigned char *rx_packet;
 
 /*
 // data will already be destuffed
-if (byte == FLAG)
-{
-    // se recebeu flag, então o acumulador chegou ao fim (o ultimo valor acumulado foi BCC2)
-    // mas ele tb já acumulou o BCC2 estipulado/recebido
-    // ou seja: DATA XOR BCC2, teoricamente, devia dar 0 (ou seja 1 XOR 1, daria 0), porque a XOR ACC DATA == BCC2
-    // pelo que, se não forem iguais, o BCC2 ou a DATA estão errados (voltar ao inicio e não aceitar o frame)
-    if (bcc2_acc == 0)
-    {
-        s = STOP; // BCC2_ACC = BCC2 (then OK)
-        // RR(NS+1)
-        // RETURN DATA PACKET
-    }
-    else
-    {
-        s = START;
-        // SEND REJ
-    }
-}
-else
-{
-    bcc2_acc ^= *byte;
-}
+
 */
 
 // otimizar este código numa func. única?
@@ -138,6 +130,30 @@ void writeI()
     sleep(1);
 }
 
+void writeRR()
+{
+    buf[0] = FLAG;
+    buf[1] = A_RX_C;
+    buf[2] = ((tx_fn == 0) ? C_RR1 : C_RR0); // ask for FN+1 (Ns+1)
+    buf[3] = buf[1] ^ buf[2];
+    buf[4] = FLAG;
+    int bytes = writeBytesSerialPort(buf, BUF_SIZE);
+    //printf("Sent RR\n");
+    sleep(1);
+}
+
+void writeREJ()
+{
+    buf[0] = FLAG;
+    buf[1] = A_RX_C;
+    buf[2] = ((tx_fn == 0) ? C_REJ0 : C_REJ1);
+    buf[3] = buf[1] ^ buf[2];
+    buf[4] = FLAG;
+    int bytes = writeBytesSerialPort(buf, BUF_SIZE);
+    //printf("Sent REJ\n");
+    sleep(1);
+}
+
 void alarmHandler(int signal)
 {
     alarmEnabled = FALSE;
@@ -169,14 +185,32 @@ int txAlarm(unsigned char* byte, enum alarm_state as)
         }
         else if (alarmEnabled == TRUE)
         {
-            int bytesRead = readByteSerialPort(&byte);
-            if (bytesRead > 0)
+            int bytesRead = readByteSerialPort(byte);
+            switch(as)
             {
-                printf("var = 0x%02X\n", byte);
-                printf("EXITED ALARM");
-                alarmEnabled = FALSE;
-                alarmCount = 0;
-                break;
+                case WRITE:
+                    if (bytesRead > 0 && (validResponse(*byte) == 0))
+                    {
+                        //printf("var = 0x%02X\n", *byte);
+                        //printf("EXITED ALARM");
+                        alarmEnabled = FALSE;
+                        alarmCount = 0;
+                        return 0;
+                    }
+                    break;
+                case OPEN:
+                    if (bytesRead > 0)
+                    {
+                        //printf("var = 0x%02X\n", *byte);
+                        //printf("EXITED ALARM");
+                        alarmEnabled = FALSE;
+                        alarmCount = 0;
+                        return 0;
+                    }
+                    break;
+                default:
+                    //printf("NOT A DEFINED STATE\n");
+                    return 1;
             }
         }
         // in the end, the alarm_handle() disabled alarmEnabled again, meaning 3 seconds have passed
@@ -243,6 +277,7 @@ int stateMachine(unsigned char byte, enum state s, enum machine_state ms, LinkLa
                         if ((byte == 0xAA) || (byte == 0xAB) || (byte == 0x54) || (byte == 0x55))
                         {
                             s = C_RCV;
+                            rx_answer = byte;
                         }
                         else
                         {
@@ -362,6 +397,7 @@ int llopen(LinkLayer connectionParameters)
     unsigned char byte;
     serialPort = connectionParameters.serialPort;
     int baudRate = connectionParameters.baudRate;
+    x_role = connectionParameters.role;
 
     if (openSerialPort(serialPort, baudRate) < 0)
     {
@@ -389,7 +425,7 @@ int llopen(LinkLayer connectionParameters)
             };
 
             // read ua
-            stateMachine(byte,START,OPEN,x_role,A_COMMAND);
+            stateMachine(byte,START,OPEN,x_role,A_REPLY);
             break;
         case LlRx:
             // read set
@@ -398,7 +434,7 @@ int llopen(LinkLayer connectionParameters)
             stateMachine(&byte,START,OPEN,x_role,A_COMMAND);
 
             // write ua
-            writeUa(A_COMMAND);
+            writeUa(A_REPLY);
             break;
         default:
             printf("Invalid role\n");
@@ -424,27 +460,27 @@ int llwrite(const unsigned char *buf, int bufSize)
     //CONFIGURAR AS FLAGS ANTES DO DATA
     unsigned int frame_size = 0;
     unsigned char frame[(2*MAX_PAYLOAD_SIZE) + 6] = {0};
-    unsigned char frame[0] = FLAG;
-    unsigned char frame[1] = A_TX_C;
+    frame[0] = FLAG;
+    frame[1] = A_TX_C;
 
     if (countframe == 0) {
-        unsigned char frame[2] = C_FRAME0;
+        frame[2] = C_FRAME0;
         countframe = 1;
-        unsigned char frame[3] = A_TX_C ^ C_FRAME0; //BCC1
+        frame[3] = A_TX_C ^ C_FRAME0; //BCC1
     } else {
-        unsigned char frame[2] = C_FRAME1;
+        frame[2] = C_FRAME1;
         countframe = 0;
-        unsigned char frame[3] = A_TX_C ^ C_FRAME1; //BCC1
+        frame[3] = A_TX_C ^ C_FRAME1; //BCC1
     }
     frame_size = 4;
 
     //PERCORRER OS DADOS E FAZER O BYTE STUFFING
     unsigned char currentByte;
-    for (int i=1; i<bufSize;) { //vou ler 2 de em 2 bytes
+    for (int i=0; i<bufSize; i++) { //vou ler 2 de em 2 bytes
         currentByte = buf[i];
         bcc2 ^= currentByte;
 
-        byte_stuffing(&currentByte, &frame, &frame_size);
+        byte_stuffing(&currentByte, frame, &frame_size);
     }
 
     //ADICIONAR AS FLAGS NO FINAL
@@ -473,28 +509,22 @@ int llwrite(const unsigned char *buf, int bufSize)
     {
         return 1;
     }
-    // logica de verificação do byte (verificar FLAG,A,C,BCC)
-    // fazer máquina de estados again, fazer verificação com alarm_state, role
-    // ou seja, em vez das multiplas opções, maybe um switch pelo alarm_state/phase (OPEN,WRITE,READ) não era mal pensado, para distinguir o C
 
-    // Falta SendREJ(n) ou SendRR(n)
-
-    // retornar se tudo certo
     return 0;
 }
 
 void byte_stuffing (unsigned char *currentbyte, unsigned char *vector, unsigned int *size) {
     if (*currentbyte == FLAG) {
+        vector[*size] = 0x7D; //ESC
+        vector[*size+1] = 0x5E;
         (*size) += 2;
-        vector[*size-1] = 0x7D; //ESC
-        vector[*size] = 0x5E;
     } else if (*currentbyte == 0x7D){
+        vector[*size] = 0x7D; //ESC
+        vector[*size+1] = 0x5D;
         (*size) += 2;
-        vector[*size-1] = 0x7D; //ESC
-        vector[*size] = 0x5D;
     } else {
+        vector[*size] = *currentbyte;
         (*size)++;
-        vector[*size-1] = *currentbyte;
     }
 }
 
@@ -515,26 +545,53 @@ int byte_destuffing (unsigned char *rx_packet, unsigned int *index, unsigned int
         (*size)++;
 
     } else {
+        if (rx_packet[*index] == FLAG) {
+            return 1;
+        }
         rx_packet[*size] = rx_packet[*index];
         (*size)++;
         (*index)++;
-        if (rx_packet[*size - 1] == FLAG) {
-            return 1;
-        }
     }
 
     return 0;
 }
 
+int checkBCC2(unsigned char* rx_packet, int size)
+{
+    unsigned char bcc2_acc = 0;
+
+    for (int i = 0; i < size; i++)
+    {
+        unsigned char byte = rx_packet[i];
+        bcc2_acc ^= byte; 
+    }
+
+    // i.e: tem de ser 0 porque o último byte foi o BCC2, pelo que se estiver certo (sum DATA ^ BCC2 = 0)
+    // um pacote XOR com ele próprio dá 0...
+    if (bcc2_acc == 0) return 0;
+    else return 1;
+}
 
 int llread(unsigned char *packet)
 {
     int flag = 0;
-    unsigned int index = 1, size = 1;
+    int index = 4, size = 0; // começar o check a partir dos dados (Depois do FLAG,A,C,BCC1)
      
     while (flag != 1) {
         if (size >= (MAX_PAYLOAD_SIZE * 2 + 6)) return 1;
         flag = byte_destuffing(rx_packet, &index, &size);
+    }
+
+    if (checkBCC2(rx_packet,size)) // bcc2 not correct
+    {
+        // send REJ(tx_fn)
+        writeREJ();
+    }
+    else
+    {
+        // send RR(tx_fn + 1)
+        writeRR();
+        memcpy(packet,rx_packet,size - 1); //exclui o bcc2 (só passa a data)
     }
 
     return 0;
@@ -587,3 +644,9 @@ int llclose()
 
     return 0;
 }
+
+// OBS : 
+/*
+    1) Verificar replies e comandos? está certo o mecanismo atual?
+    2) é preciso só retransmitir frames ou SET's, DISC's, UA's também são precisos?
+*/
