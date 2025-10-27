@@ -586,14 +586,14 @@ int llread(unsigned char *packet)
     {
         // send REJ(tx_fn)
         writeREJ();
-        return 1;
+        return -1;
     }
     else
     {
         // send RR(tx_fn + 1)
         writeRR();
         memcpy(packet,rx_packet,size - 1); //exclui o bcc2 (só passa a data)
-        return 0;
+        return size-1;
     }
 }
 
