@@ -17,6 +17,7 @@ int flags, fd;
 off_t file_size;
 
 unsigned char ctrl_pck[MAX_PAYLOAD_SIZE];
+unsigned char data_pck[MAX_PAYLOAD_SIZE + 3];   // 1 byte C + 2 bytes L2L1 + dados
 
 
 enum state {OPENFILE, START_PACKET, DATA_PACKET, END_PACKET, END};
@@ -30,7 +31,7 @@ void stateMachine(enum state s) {
             s = START_PACKET;
             break;
         case START_PACKET:
-            if (buildCtrlPck()) {
+            if (buildCtrlPck(CTRL_START)) {
                 llclose();
                 s = END;
             }
@@ -54,7 +55,7 @@ void stateMachine(enum state s) {
             }
             break;
         case END_PACKET:
-            buildCtrlPck();
+            buildCtrlPck(CTRL_END);
             llwrite();
             llclose();
             s = END;
@@ -67,7 +68,7 @@ void stateMachine(enum state s) {
 int parse_cmdLine();
 
 int openFile() {
-    fd = open(pathname, flags);
+    fd = open(file_name, flags);
     if (fd == -1) return 1;
 
     struct stat st;
@@ -89,15 +90,39 @@ int buildCtrlPck(unsigned char control) {
 
     //parameter size (t,l,v)
     ctrl_pck[idx++] = TYPE_FILESIZE;
-    ctrl_pck[2] = (unsigned int) file_size;
-    ctrl_pck[2] = control;
+    ctrl_pck[idx++] = sizeof(file_size);
+
+    for (int i = sizeof(file_size) - 1; i >= 0; i--) {
+        ctrl_pck[idx++] = (file_size >> (8 * i)) & 0xFF;
+    }
+
     //parameter file name (t,l,v)
+    //O protocolo só suporta ficheiros cujo nome tem, no máximo, 255 caracteres.
+    // Se file_name for superior, o campo L (1byte) não conseguirá representá-lo, pois haverá truncamento.
+    unsigned char name_len = (unsigned char) strlen(file_name);
+
+    ctrl_pck[idx++] = TYPE_FILENAME;
+    ctrl_pck[idx++] = name_len;
+
+    memcpy(&ctrl_pck[idx], file_name, name_len);
+    idx += name_len;
+
+    return idx; //tamanho total do pacote, em bytes.
 }
 
+int buildDataPck(unsigned char *frag, int frag_size) {
+    int idx = 0;
 
+    data_pck[idx++] = 2;
+    data_pck[idx++] = (frag_size >> 8) & 0xFF;  // L2
+    data_pck[idx++] = frag_size & 0xFF; //L1
 
+    memcpy(&data_pck[idx], frag, (unsigned char) frag_size);
+    idx += frag_size;
+    
+    return idx; //tamanho total do pacote, em bytes.
+}
 
-int buildDataPck();
 int readFragFile();
 
 void applicationLayer(const char *serialPort, const char *role, int baudRate,
