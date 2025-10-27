@@ -31,23 +31,27 @@ void stateMachine(enum state s) {
             s = START_PACKET;
             break;
         case START_PACKET:
-            if (buildCtrlPck(CTRL_START)) {
+            int b;
+            if (b = buildCtrlPck(CTRL_START)) {
                 llclose();
                 s = END;
             }
-            if (llwrite()) {
+            if (llwrite(ctrl_pck, b)) {
                 llclose();
                 s = END;
             }
             s = DATA_PACKET;
             break;
         case DATA_PACKET:
-            if (readFragFile()) {
-                if (buildDataPck()) {
+            unsigned char frag[MAX_PAYLOAD_SIZE];
+            int r;
+            if (r = readFragFile(frag)) {
+                int b;
+                if (b = buildDataPck(frag, r)) {
                     llclose();
                     s = END;
                 }
-                if (llwrite()) {
+                if (llwrite(data_pck, b)) {
                     llclose();
                     s = END;
                 }
@@ -55,10 +59,15 @@ void stateMachine(enum state s) {
             }
             break;
         case END_PACKET:
-            buildCtrlPck(CTRL_END);
-            llwrite();
+            int b;
+            b = buildCtrlPck(CTRL_END);
+            llwrite(ctrl_pck, b);
             llclose();
             s = END;
+            break;
+        case END:
+            close(fd);
+            fd = -1;
             break;
         default:
             break;
@@ -123,7 +132,14 @@ int buildDataPck(unsigned char *frag, int frag_size) {
     return idx; //tamanho total do pacote, em bytes.
 }
 
-int readFragFile();
+int readFragFile(unsigned char *frag) {
+    int n = read(fd, frag, MAX_PAYLOAD_SIZE);
+    if (n < 0) {
+        perror("Error reading file");
+        return -1;
+    }
+    return n;   //número de bytes lidos
+}
 
 void applicationLayer(const char *serialPort, const char *role, int baudRate,
                       int nTries, int timeout, const char *filename)
