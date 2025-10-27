@@ -19,35 +19,114 @@ off_t file_size;
 unsigned char ctrl_pck[MAX_PAYLOAD_SIZE];
 unsigned char data_pck[MAX_PAYLOAD_SIZE + 3];   // 1 byte C + 2 bytes L2L1 + dados
 
+// rx aux
+int rx_fsize = 0;
+unsigned char rx_fname[MAX_PAYLOAD_SIZE];
+FILE *rx_fptr;
 
 enum state {OPENFILE, START_PACKET, DATA_PACKET, END_PACKET, END};
 
 void stateMachine(enum state s) {
     switch (s) {
         case OPENFILE:
-            if (parse_cmdLine()) return;
-            if (openFile()) return;
+            switch(connectionParameters.role)
+            {
+                case LlTx:
+                    if (parse_cmdLine()) return;
+                    if (openFile()) return;
+                    break;
+                case LlRx:
+                    break;
+                default:
+                    return;
+            }
             if (llopen(connectionParameters)) return;
             s = START_PACKET;
             break;
         case START_PACKET:
-            if (buildCtrlPck(CTRL_START)) {
-                llclose();
-                s = END;
+            // isto não funciona!! return é sempre >0 (retorna o tamanho do ficheiro) e assim termina a conexão!
+            switch(connectionParameters.role)
+            {
+                case LlTx:
+                    int b;
+                    if (b = buildCtrlPck(CTRL_START)) {
+                        llclose();
+                        s = END;
+                    }
+                    if (llwrite(ctrl_pck, b)) {
+                        llclose();
+                        s = END;
+                    }
+                    s = DATA_PACKET;
+                    break;
+                case LlRx:
+                    // ler o pacote de controlo escrito
+                    unsigned char packet[MAX_PAYLOAD_SIZE];
+                    if (llread(packet) == 0)
+                    {
+                        unsigned char control = packet[0];
+                        if (control == CTRL_START) // start packet
+                        {
+                            // extract name and size
+                            unsigned char l1, l2;
+                            packet++;
+                            if (*packet == TYPE_FILESIZE)
+                            {
+                                packet++;
+                                l1 = *packet;
+                                packet++;
+
+                                // o byte size vem em L1 bytes no pacote (Temos que os percorrer)
+                                // deslocar o último byte (octet) para a esquerda e adicionar o valor do novo byte
+                                for (int i = 0; i < l1; i++)
+                                {
+                                    rx_fsize = (rx_fsize << 8) | (*packet);
+                                    packet++;
+                                }
+
+                                if (*packet == TYPE_FILENAME)
+                                {
+                                    packet++;
+                                    l2 = *packet;
+                                    packet++;
+
+                                    // como o nome também vem em vários bytes, fazemos um memcpy dá região
+                                    memcpy(rx_fname, packet, l2);
+
+                                    // terminar a string
+                                    rx_fname[l2] = '\0';
+                                }
+                            }
+
+                            // create file
+                            rx_fptr = fopen(rx_fname, "wb");
+                            if (rx_fptr == NULL)
+                            {
+                                perror("erro ao criar ficheiro");
+                                return;
+                            }
+                            
+                            // tudo ok
+                            s = DATA_PACKET;
+                        }
+                    }
+                    // else fica aqui a esperar pelo start packet
+                    break;
+                default:
+                    return;
             }
-            if (llwrite()) {
-                llclose();
-                s = END;
-            }
-            s = DATA_PACKET;
             break;
         case DATA_PACKET:
-            if (readFragFile()) {
-                if (buildDataPck()) {
+            unsigned char frag[MAX_PAYLOAD_SIZE];
+            int r;
+            if (r = readFragFile(frag)) {
+                int b;
+                // isto não funciona!! return é sempre >0 (retorna o tamanho do ficheiro) e assim termina a conexão!
+                if (b = buildDataPck(frag, r)) {
                     llclose();
                     s = END;
                 }
-                if (llwrite()) {
+                if (llwrite(data_pck, b)) {
                     llclose();
                     s = END;
                 }
@@ -55,11 +134,18 @@ void stateMachine(enum state s) {
             }
             break;
         case END_PACKET:
-            buildCtrlPck(CTRL_END);
-            llwrite();
+            int b;
+            b = buildCtrlPck(CTRL_END);
+            llwrite(ctrl_pck, b);
             llclose();
             s = END;
             break;
+        case END:
+            close(fd);
+            fd = -1;
+            return;
+
+            // não esquecer de fechar fclose(rx_fptr)
         default:
             break;
     }
@@ -123,7 +209,14 @@ int buildDataPck(unsigned char *frag, int frag_size) {
     return idx; //tamanho total do pacote, em bytes.
 }
 
-int readFragFile();
+int readFragFile(unsigned char *frag) {
+    int n = read(fd, frag, MAX_PAYLOAD_SIZE);
+    if (n < 0) {
+        perror("Error reading file");
+        return -1;
+    }
+    return n;   //número de bytes lidos
+}
 
 void applicationLayer(const char *serialPort, const char *role, int baudRate,
                       int nTries, int timeout, const char *filename)
