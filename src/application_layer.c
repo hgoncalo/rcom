@@ -21,7 +21,7 @@
 
 LinkLayer connectionParameters;
 const char *file_name;
-int flags, tx_fd;
+int tx_fd;
 off_t file_size;
 
 unsigned char ctrl_pck[MAX_PAYLOAD_SIZE];
@@ -40,23 +40,37 @@ FILE *rx_fptr;
 enum state {OPENFILE, START_PACKET, DATA_PACKET, END_PACKET, END};
 
 // aux
-int parse_cmdLine();
+void parse_cmdLine();
 int openFile();
 int buildCtrlPck(unsigned char control);
 int buildDataPck(unsigned char *frag, int frag_size);
 int readFragFile(unsigned char *frag);
 
 void appStateMachine(enum state s) {
+    printf("[SM] Starting appStateMachine with state = %d\n", s);
+    printf("[SM] Starting appStateMachine with state = %d\n", s);
+    printf("[SM] Starting appStateMachine with state = %d\n", s);
+
+
     while(s != END)
     {
         unsigned char packet[MAX_PAYLOAD_SIZE];
         unsigned char frag[MAX_PAYLOAD_SIZE];
         switch (s) {
             case OPENFILE:
+
+                printf("[SM] Entered state OPENFILE\n");
+                printf("[SM] Entered state OPENFILE\n");
+                printf("[SM] Entered state OPENFILE\n");
+                printf("[SM] Entered state OPENFILE\n");
+                printf("[SM] Entered state OPENFILE\n");
+                printf("[SM] Entered state OPENFILE\n");
+                printf("[SM] Entered state OPENFILE\n");
+
                 switch(connectionParameters.role)
                 {
                     case LlTx:
-                        if (parse_cmdLine()) return;
+                        //parse_cmdLine();
                         if (openFile()) return;
                         break;
                     case LlRx:
@@ -68,20 +82,34 @@ void appStateMachine(enum state s) {
                 s = START_PACKET;
                 break;
             case START_PACKET:
+
+                printf("[SM] Entered state START_PACKET\n");
+                printf("[SM] Entered state START_PACKET\n");
+                printf("[SM] Entered state START_PACKET\n");
+                printf("[SM] Entered state START_PACKET\n");
+                printf("[SM] Entered state START_PACKET\n");
+                printf("[SM] Entered state START_PACKET\n");
+
             
                 switch(connectionParameters.role)
                 {
                     case LlTx:
                         b_size = buildCtrlPck(CTRL_START);
+
+                        printf("[TX] Built START packet, size = %d\n", b_size);
+
                         if (b_size < 0) {
                             llclose();
                             s = END;
                         }
                         if (llwrite(ctrl_pck, b_size) < 0) {
+                            printf("[TX] llwrite START packet failed\n");
                             llclose();
                             s = END;
                         }
+                        printf("[TX] START packet sent\n");
                         s = DATA_PACKET;
+
                         break;
                     case LlRx:
                         // ler o pacote de controlo escrito
@@ -141,10 +169,28 @@ void appStateMachine(enum state s) {
                 }
                 break;
             case DATA_PACKET:
+
+                printf("[SM] Entered state DATA_PACKET\n");
+                printf("[SM] Entered state DATA_PACKET\n");
+                printf("[SM] Entered state DATA_PACKET\n");
+                printf("[SM] Entered state DATA_PACKET\n");
+                printf("[SM] Entered state DATA_PACKET\n");
+                printf("[SM] Entered state DATA_PACKET\n");
+                printf("[SM] Entered state DATA_PACKET\n");
+                printf("[SM] Entered state DATA_PACKET\n");
+
+
                 switch(connectionParameters.role)
                 {
                     case LlTx:
                         r_size = readFragFile(frag);
+
+                        printf("[TX] Read fragment: %d bytes\n", r_size);
+                        printf("[TX] Read fragment: %d bytes\n", r_size);
+                        printf("[TX] Read fragment: %d bytes\n", r_size);
+
+
+
                         if (r_size > 0)
                         {
                             b_size = buildDataPck(frag, r_size);
@@ -164,10 +210,21 @@ void appStateMachine(enum state s) {
                     case LlRx:
                         // ler o pacote de controlo escrito
                         p_size = llread(packet);
+
+
+                        printf("[RX] llread returned %d bytes\n", p_size);
+                        printf("[RX] llread returned %d bytes\n", p_size);
+
+
                         if (p_size > 0)
                         {
                             // if END packet, go to end
                             unsigned char control = packet[0];
+
+                            printf("[RX] Control byte = %d\n", control);
+                            printf("[RX] Control byte = %d\n", control);
+
+
                             if (control == CTRL_END) // end packet
                             {
                                 llclose();
@@ -189,6 +246,16 @@ void appStateMachine(enum state s) {
                 }
                 break;
             case END_PACKET:
+                
+
+                printf("[SM] Entered state END_PACKET\n");
+                printf("[SM] Entered state END_PACKET\n");
+                printf("[SM] Entered state END_PACKET\n");
+                printf("[SM] Entered state END_PACKET\n");
+                printf("[SM] Entered state END_PACKET\n");
+                printf("[SM] Entered state END_PACKET\n");
+
+
                 b_size = buildCtrlPck(CTRL_END);
                 if (llwrite(ctrl_pck, b_size) < 0)
                 {
@@ -197,31 +264,68 @@ void appStateMachine(enum state s) {
                 llclose();
                 s = END;
                 break;
+            case END:
+
+                printf("[SM] Entered state END\n");
+                printf("[SM] Entered state END\n");
+                printf("[SM] Entered state END\n");
+                printf("[SM] Entered state END\n");
+                printf("[SM] Entered state END\n");
+                printf("[SM] Entered state END\n");
+
+
+
+                switch(connectionParameters.role)
+                {
+                case LlTx:
+                    close(tx_fd);
+                    tx_fd = -1;
+                    break;
+                case LlRx:
+                    fclose(rx_fptr);
+                    break;
+                }
             default:
                 return;
         }
     }
-    if (s == END)
-    {
-        switch(connectionParameters.role)
-        {
-            case LlTx:
-                close(tx_fd);
-                tx_fd = -1;
-                break;
-            case LlRx:
-                fclose(rx_fptr);
-                break;
-        }
-    }
-    return;
+    printf("[SM] Exiting appStateMachine with state = %d\n", s);
 }
 
-int parse_cmdLine();
+void parse_cmdLine(const char *serialPort, const char *role, int baudRate,
+                int nTries, int timeout, const char *filename) {
+    
+
+    strcpy(connectionParameters.serialPort, serialPort); // não podemos atribuir array a um array direto... temos que copiar a mem
+
+    if (strcmp(role, "tx") == 0)
+    {
+        connectionParameters.role = LlTx;
+    }
+    else if (strcmp(role, "rx") == 0)
+    {
+        connectionParameters.role = LlRx;
+    }
+    else 
+    {
+        perror("not a valid role");
+        return;
+    }
+
+    connectionParameters.baudRate = baudRate;
+    connectionParameters.nRetransmissions = nTries;
+    connectionParameters.timeout = timeout; 
+
+    file_name = filename;
+
+}
 
 int openFile() {
-    tx_fd = open(file_name, flags);
-    if (tx_fd == -1) return 1;
+    tx_fd = open(file_name, O_RDONLY);
+    if (tx_fd == -1) {
+        perror("Error opening serial port");
+        exit(1);
+    }
 
     struct stat st;
     if (fstat(tx_fd, &st) == -1) {
@@ -288,29 +392,10 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
                       int nTries, int timeout, const char *filename)
     {
 
-    strcpy(connectionParameters.serialPort, serialPort); // não podemos atribuir array a um array direto... temos que copiar a mem
-
-    if (strcmp(role, "tx") == 0)
-    {
-        connectionParameters.role = LlTx;
-    }
-    else if (strcmp(role, "rx") == 0)
-    {
-        connectionParameters.role = LlRx;
-    }
-    else 
-    {
-        perror("not a valid role");
-        return;
-    }
-
-    connectionParameters.baudRate = baudRate;
-    connectionParameters.nRetransmissions = nTries;
-    connectionParameters.timeout = timeout; 
-
-    file_name = filename;
+    parse_cmdLine(serialPort, role, baudRate, nTries, timeout, filename);
 
     appStateMachine(OPENFILE);
+
 
     //Announces to the receiver that a file is going to be sent
     //Sends a START packet with name and size of file

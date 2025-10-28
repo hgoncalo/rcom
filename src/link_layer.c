@@ -86,6 +86,10 @@ unsigned char *rx_packet;
 // otimizar este código numa func. única?
 void writeSet()
 {
+
+    printf("[SM] Entered writeSet()\n");
+
+
     buf[0] = FLAG;
     buf[1] = A_TX_C;
     buf[2] = C_SET;
@@ -136,9 +140,15 @@ int getAType(LinkLayerRole role, int type)
 
 void writeI()
 {
+
+    printf("[SM] Entered writeI()\n");
+
+
     tx_fn = (tx_frame[2] != 0);
     writeBytesSerialPort(tx_frame,tx_buf_size);
     sleep(1);
+
+    printf("[SM] Exited writeI()\n");
 }
 
 void writeRR()
@@ -174,6 +184,9 @@ void alarmHandler(int signal)
 
 int txAlarm(unsigned char* byte, enum alarm_state as)
 {
+    printf("[SM] Entered txAlarm()\n");
+
+
     while (alarmCount < 4)
     {
         if (alarmEnabled == FALSE)
@@ -193,6 +206,7 @@ int txAlarm(unsigned char* byte, enum alarm_state as)
             
             alarm(3); // Set alarm to be triggered in 3s
             alarmEnabled = TRUE;
+
         }
         else if (alarmEnabled == TRUE)
         {
@@ -200,22 +214,36 @@ int txAlarm(unsigned char* byte, enum alarm_state as)
             switch(as)
             {
                 case ALARM_WRITE:
+
+                    printf("[SM] Entered ALARM_WRITE Case\n");
+
+
                     if (bytesRead > 0 && (validResponse(*byte) == 0))
                     {
                         //printf("var = 0x%02X\n", *byte);
                         //printf("EXITED ALARM");
                         alarmEnabled = FALSE;
                         alarmCount = 0;
+
+                        printf("[SM] txAlarm exited with 0\n");
+
                         return 0;
                     }
                     break;
                 case ALARM_OPEN:
+
+                    printf("[SM] Entered ALARM_OPEN Case\n");
+
                     if (bytesRead > 0)
                     {
                         //printf("var = 0x%02X\n", *byte);
                         //printf("EXITED ALARM");
                         alarmEnabled = FALSE;
                         alarmCount = 0;
+
+                        printf("[SM] txAlarm exited with 0\n");
+
+
                         return 0;
                     }
                     break;
@@ -460,6 +488,8 @@ int llopen(LinkLayer connectionParameters)
 int llwrite(const unsigned char *buf, int bufSize)
 {
 
+    printf("[SM] Entered llwrite()\n");
+
     // tamanho do vetor 2*max_payload_size + 6
     // max_payload_size é 1000
     // caso todos os caracteres sejam flag,sera necessario fazer o byte stuffing de todos eles, o que faria com que o tamanho duplicasse
@@ -516,15 +546,20 @@ int llwrite(const unsigned char *buf, int bufSize)
     printf("Alarm configured\n");
     
     // write I and expect ACK
-    if (txAlarm(&byte,ALARM_WRITE))
-    {
-        return 1;
-    }
+    if (txAlarm(&byte, ALARM_WRITE)) return 1;
+
+    printf("[SM] Left llwrite() with return 0\n");
 
     return 0;
+
 }
 
 void byte_stuffing (unsigned char *currentbyte, unsigned char *vector, unsigned int *size) {
+
+    printf("[SM] Entered byte_stuffing()\n");
+    printf("[SM] Entered byte_stuffing()\n");
+    printf("[SM] Entered byte_stuffing()\n");
+
     if (*currentbyte == FLAG) {
         vector[*size] = 0x7D; //ESC
         vector[*size+1] = 0x5E;
@@ -537,6 +572,10 @@ void byte_stuffing (unsigned char *currentbyte, unsigned char *vector, unsigned 
         vector[*size] = *currentbyte;
         (*size)++;
     }
+
+    printf("[SM] Left byte_stuffing()\n");
+    printf("[SM] Left byte_stuffing()\n");
+    printf("[SM] Left byte_stuffing()\n");
 }
 
 ////////////////////////////////////////////////
