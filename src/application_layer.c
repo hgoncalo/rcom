@@ -4,6 +4,13 @@
 #include "link_layer.h"
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <signal.h>
+#include <stddef.h>
 
 #define ERROR -1
 #define CTRL_START 1
@@ -14,22 +21,36 @@
 
 LinkLayer connectionParameters;
 const char *file_name;
-int flags, fd;
+int flags, tx_fd;
 off_t file_size;
 
 unsigned char ctrl_pck[MAX_PAYLOAD_SIZE];
 unsigned char data_pck[MAX_PAYLOAD_SIZE + 3];   // 1 byte C + 2 bytes L2L1 + dados
 
+// tx aux
+int b_size = 0;
+int r_size = 0;
+
 // rx aux
 int rx_fsize = 0;
-unsigned char rx_fname[MAX_PAYLOAD_SIZE];
+int p_size = 0;
+char rx_fname[MAX_PAYLOAD_SIZE];
 FILE *rx_fptr;
 
 enum state {OPENFILE, START_PACKET, DATA_PACKET, END_PACKET, END};
 
-void stateMachine(enum state s) {
+// aux
+int parse_cmdLine();
+int openFile();
+int buildCtrlPck(unsigned char control);
+int buildDataPck(unsigned char *frag, int frag_size);
+int readFragFile(unsigned char *frag);
+
+void appStateMachine(enum state s) {
     while(s != END)
     {
+        unsigned char packet[MAX_PAYLOAD_SIZE];
+        unsigned char frag[MAX_PAYLOAD_SIZE];
         switch (s) {
             case OPENFILE:
                 switch(connectionParameters.role)
@@ -51,8 +72,12 @@ void stateMachine(enum state s) {
                 switch(connectionParameters.role)
                 {
                     case LlTx:
-                        int b = buildCtrlPck(CTRL_START);
-                        if (llwrite(ctrl_pck, b) == ERROR) {
+                        b_size = buildCtrlPck(CTRL_START);
+                        if (b_size < 0) {
+                            llclose();
+                            s = END;
+                        }
+                        if (llwrite(ctrl_pck, b_size) < 0) {
                             llclose();
                             s = END;
                         }
@@ -60,37 +85,37 @@ void stateMachine(enum state s) {
                         break;
                     case LlRx:
                         // ler o pacote de controlo escrito
-                        unsigned char packet[MAX_PAYLOAD_SIZE];
                         if (llread(packet) > 0)
                         {
                             unsigned char control = packet[0];
+                            unsigned char *packet_aux = packet + 1;
                             if (control == CTRL_START) // start packet
                             {
                                 // extract name and size
                                 unsigned char l1, l2;
-                                packet++;
-                                if (*packet == TYPE_FILESIZE)
+                                packet_aux++;
+                                if (*packet_aux == TYPE_FILESIZE)
                                 {
-                                    packet++;
-                                    l1 = *packet;
-                                    packet++;
+                                    packet_aux++;
+                                    l1 = *packet_aux;
+                                    packet_aux++;
                                 
                                     // o byte size vem em L1 bytes no pacote (Temos que os percorrer)
                                     // deslocar o último byte (octet) para a esquerda e adicionar o valor do novo byte
                                     for (int i = 0; i < l1; i++)
                                     {
-                                        rx_fsize = (rx_fsize << 8) | (*packet);
-                                        packet++;
+                                        rx_fsize = (rx_fsize << 8) | (*packet_aux);
+                                        packet_aux++;
                                     }
                                 
-                                    if (*packet == TYPE_FILENAME)
+                                    if (*packet_aux == TYPE_FILENAME)
                                     {
-                                        packet++;
-                                        l2 = *packet;
-                                        packet++;
+                                        packet_aux++;
+                                        l2 = *packet_aux;
+                                        packet_aux++;
                                     
                                         // como o nome também vem em vários bytes, fazemos um memcpy dá região
-                                        memcpy(rx_fname, packet, l2);
+                                        memcpy(rx_fname, packet_aux, l2);
                                     
                                         // terminar a string
                                         rx_fname[l2] = '\0';
@@ -119,29 +144,27 @@ void stateMachine(enum state s) {
                 switch(connectionParameters.role)
                 {
                     case LlTx:
-                        unsigned char frag[MAX_PAYLOAD_SIZE];
-                        int r = readFragFile(frag);
-
-                        if (r > 0) {
-                            int b = buildDataPck(frag, r);
-                            if (llwrite(data_pck, b) == ERROR) {
+                        r_size = readFragFile(frag);
+                        if (r_size > 0)
+                        {
+                            b_size = buildDataPck(frag, r_size);
+                            if ((b_size < 0) || (llwrite(data_pck, b_size) < 0))
+                            {
                                 llclose();
                                 s = END;
                             }
-
-                        } else if (r == 0) {
-                            s = END_PACKET;
-                        } else {
-                            llclose();
-                            s = END;
                         }
-
+                        else if (r_size < 0)
+                        {
+                            llclose();
+                            s = END;     
+                        }
+                        else s = END_PACKET;
                         break;
                     case LlRx:
                         // ler o pacote de controlo escrito
-                        unsigned char packet[MAX_PAYLOAD_SIZE];
-                        int p_size;
-                        if ((p_size = llread(packet)) > 0)
+                        p_size = llread(packet);
+                        if (p_size > 0)
                         {
                             // if END packet, go to end
                             unsigned char control = packet[0];
@@ -151,9 +174,13 @@ void stateMachine(enum state s) {
                                 s = END;
                             }
                             // if DATA packet
-                            else
+                            else if (control == 2) // não é end nem start, é dados
                             {
-                                fwrite(packet, 1, p_size, rx_fptr);
+                                unsigned char l2 = packet[1];
+                                unsigned char l1 = packet[2];
+                                int d_size = (l2 * 256) + l1;
+                                unsigned char *packet_aux = packet + 3;
+                                fwrite(packet_aux, 1, d_size, rx_fptr);
                             }
                         }
                         break;
@@ -162,9 +189,11 @@ void stateMachine(enum state s) {
                 }
                 break;
             case END_PACKET:
-                int b;
-                b = buildCtrlPck(CTRL_END);
-                llwrite(ctrl_pck, b);
+                b_size = buildCtrlPck(CTRL_END);
+                if (llwrite(ctrl_pck, b_size) < 0)
+                {
+                    perror("erro a enviar END packet");
+                }
                 llclose();
                 s = END;
                 break;
@@ -177,8 +206,8 @@ void stateMachine(enum state s) {
         switch(connectionParameters.role)
         {
             case LlTx:
-                close(fd);
-                fd = -1;
+                close(tx_fd);
+                tx_fd = -1;
                 break;
             case LlRx:
                 fclose(rx_fptr);
@@ -191,14 +220,14 @@ void stateMachine(enum state s) {
 int parse_cmdLine();
 
 int openFile() {
-    fd = open(file_name, flags);
-    if (fd == -1) return 1;
+    tx_fd = open(file_name, flags);
+    if (tx_fd == -1) return 1;
 
     struct stat st;
-    if (fstat(fd, &st) == -1) {
+    if (fstat(tx_fd, &st) == -1) {
         perror("Error obtaining file size");
-        close(fd);
-        return 1;
+        close(tx_fd);
+        return -1;
     }
 
     file_size = st.st_size;
@@ -247,7 +276,7 @@ int buildDataPck(unsigned char *frag, int frag_size) {
 }
 
 int readFragFile(unsigned char *frag) {
-    int n = read(fd, frag, MAX_PAYLOAD_SIZE);
+    int n = read(tx_fd, frag, MAX_PAYLOAD_SIZE);
     if (n < 0) {
         perror("Error reading file");
         return -1;
@@ -257,45 +286,41 @@ int readFragFile(unsigned char *frag) {
 
 void applicationLayer(const char *serialPort, const char *role, int baudRate,
                       int nTries, int timeout, const char *filename)
-{
-    // TODO: Implement this function
-    connectionParameters.serialPort = serialPort;
-    connectionParameters.role = role;
+    {
+
+    strcpy(connectionParameters.serialPort, serialPort); // não podemos atribuir array a um array direto... temos que copiar a mem
+
+    if (strcmp(role, "tx") == 0)
+    {
+        connectionParameters.role = LlTx;
+    }
+    else if (strcmp(role, "rx") == 0)
+    {
+        connectionParameters.role = LlRx;
+    }
+    else 
+    {
+        perror("not a valid role");
+        return;
+    }
+
     connectionParameters.baudRate = baudRate;
     connectionParameters.nRetransmissions = nTries;
-    connectionParameters.timeout = timeout;
+    connectionParameters.timeout = timeout; 
 
     file_name = filename;
 
-    stateMachine(OPENFILE);
-
-
-
-
+    appStateMachine(OPENFILE);
 
     //Announces to the receiver that a file is going to be sent
     //Sends a START packet with name and size of file
     // This is a type of CONTROL packet 
 
-
-
-
-
-
     //Takes the file and breaks it into smaller chunks (data fragments)
     //Packs each segment into a DATA packet by adding an header 
     //Sends each DATA packet 
 
-
-
-
-
-
     //After sending the last DATA packet, announces to the receiver that the transfer is finalised
     //Sends an END packet (another CONTROL packet)
-
-
-
-
 
 }

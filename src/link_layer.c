@@ -3,6 +3,13 @@
 #include "link_layer.h"
 #include "serial_port.h"
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <signal.h>
+#include <string.h>
+#include <stddef.h>
+
 // MISC
 #define _POSIX_SOURCE 1 // POSIX compliant source
 #define BUF_SIZE 256
@@ -29,14 +36,14 @@
 // E ! é C/R (Command ou Reply)
 
 enum state {START, FLAG_RCV, A_RCV, C_RCV, BCC_OK, STOP}; 
-enum alarm_state {OPEN,WRITE};
+enum alarm_state {ALARM_OPEN,ALARM_WRITE};
 enum machine_state {OPEN, WRITE, READ, CLOSE};
 
 void writeSet();
 void writeUa();
 void alarmHandler();
 // Tx state machine
-int stateMachine();
+int stateMachine(unsigned char byte, enum state s, enum machine_state ms, LinkLayerRole role, int type);
 
 unsigned char buf[BUF_SIZE] = {0};
 int alarmEnabled = FALSE;
@@ -51,6 +58,10 @@ int tx_fn; // sender's frame number (I(0) would be 0, varies between 0,1)
 int tx_buf_size = (MAX_PAYLOAD_SIZE * 2) + 6; // currently: max buffer size that will be sent (buf's data with stuffing + 6 flags), can be ajusted to only the necessary
 unsigned char *tx_frame;
 unsigned char rx_answer;
+
+void byte_stuffing(unsigned char *currentbyte, unsigned char *vector, unsigned int *size);
+int byte_destuffing(unsigned char *rx_packet, unsigned int *index, unsigned int *size); 
+int getAType(LinkLayerRole role, int type);
 
 int validResponse(unsigned char byte)
 {
@@ -80,7 +91,7 @@ void writeSet()
     buf[2] = C_SET;
     buf[3] = buf[1] ^ buf[2];
     buf[4] = FLAG;
-    int bytes = writeBytesSerialPort(buf, BUF_SIZE);
+    writeBytesSerialPort(buf, BUF_SIZE);
     //printf("Sent SET\n");
     sleep(1);
 }
@@ -92,7 +103,7 @@ void writeUa(int type)
     buf[2] = C_UA;
     buf[3] = buf[1] ^ buf[2];
     buf[4] = FLAG;
-    int bytes = writeBytesSerialPort(buf, BUF_SIZE);
+    writeBytesSerialPort(buf, BUF_SIZE);
     //printf("SENT UA\n");
     sleep(1);
 }
@@ -104,7 +115,7 @@ void writeDisc(int type)
     buf[2] = C_DISC;
     buf[3] = buf[1] ^ buf[2];
     buf[4] = FLAG;
-    int bytes = writeBytesSerialPort(buf, BUF_SIZE);
+    writeBytesSerialPort(buf, BUF_SIZE);
     //printf("Sent SET\n");
     sleep(1);
 }
@@ -137,7 +148,7 @@ void writeRR()
     buf[2] = ((tx_fn == 0) ? C_RR1 : C_RR0); // ask for FN+1 (Ns+1)
     buf[3] = buf[1] ^ buf[2];
     buf[4] = FLAG;
-    int bytes = writeBytesSerialPort(buf, BUF_SIZE);
+    writeBytesSerialPort(buf, BUF_SIZE);
     //printf("Sent RR\n");
     sleep(1);
 }
@@ -149,7 +160,7 @@ void writeREJ()
     buf[2] = ((tx_fn == 0) ? C_REJ0 : C_REJ1);
     buf[3] = buf[1] ^ buf[2];
     buf[4] = FLAG;
-    int bytes = writeBytesSerialPort(buf, BUF_SIZE);
+    writeBytesSerialPort(buf, BUF_SIZE);
     //printf("Sent REJ\n");
     sleep(1);
 }
@@ -169,10 +180,10 @@ int txAlarm(unsigned char* byte, enum alarm_state as)
         {
             switch(as)
             {
-                case OPEN:
+                case ALARM_OPEN:
                     writeSet();
                     break;
-                case WRITE:
+                case ALARM_WRITE:
                     writeI();
                     break;
                 default:
@@ -188,7 +199,7 @@ int txAlarm(unsigned char* byte, enum alarm_state as)
             int bytesRead = readByteSerialPort(byte);
             switch(as)
             {
-                case WRITE:
+                case ALARM_WRITE:
                     if (bytesRead > 0 && (validResponse(*byte) == 0))
                     {
                         //printf("var = 0x%02X\n", *byte);
@@ -198,7 +209,7 @@ int txAlarm(unsigned char* byte, enum alarm_state as)
                         return 0;
                     }
                     break;
-                case OPEN:
+                case ALARM_OPEN:
                     if (bytesRead > 0)
                     {
                         //printf("var = 0x%02X\n", *byte);
@@ -419,7 +430,7 @@ int llopen(LinkLayer connectionParameters)
             printf("Alarm configured\n");
 
             // write set
-            if (txAlarm(&byte))
+            if (txAlarm(&byte,ALARM_OPEN))
             {
                 return 1;
             };
@@ -431,7 +442,7 @@ int llopen(LinkLayer connectionParameters)
             // read set
             readByteSerialPort(&byte);
             //printf("var = 0x%02X\n", byte);
-            stateMachine(&byte,START,OPEN,x_role,A_COMMAND);
+            stateMachine(byte,START,OPEN,x_role,A_COMMAND);
 
             // write ua
             writeUa(A_REPLY);
@@ -505,7 +516,7 @@ int llwrite(const unsigned char *buf, int bufSize)
     printf("Alarm configured\n");
     
     // write I and expect ACK
-    if (txAlarm(&byte,WRITE))
+    if (txAlarm(&byte,ALARM_WRITE))
     {
         return 1;
     }
@@ -575,7 +586,7 @@ int checkBCC2(unsigned char* rx_packet, int size)
 int llread(unsigned char *packet)
 {
     int flag = 0;
-    int index = 4, size = 0; // começar o check a partir dos dados (Depois do FLAG,A,C,BCC1)
+    unsigned int index = 4, size = 0; // começar o check a partir dos dados (Depois do FLAG,A,C,BCC1)
      
     while (flag != 1) {
         if (size >= (MAX_PAYLOAD_SIZE * 2 + 6)) return 1;
