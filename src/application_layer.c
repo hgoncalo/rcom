@@ -19,8 +19,13 @@ off_t file_size;
 unsigned char ctrl_pck[MAX_PAYLOAD_SIZE];
 unsigned char data_pck[MAX_PAYLOAD_SIZE + 3];   // 1 byte C + 2 bytes L2L1 + dados
 
+// tx aux
+int b_size = 0;
+int r_size = 0;
+
 // rx aux
 int rx_fsize = 0;
+int p_size = 0;
 unsigned char rx_fname[MAX_PAYLOAD_SIZE];
 FILE *rx_fptr;
 
@@ -29,6 +34,8 @@ enum state {OPENFILE, START_PACKET, DATA_PACKET, END_PACKET, END};
 void stateMachine(enum state s) {
     while(s != END)
     {
+        unsigned char packet[MAX_PAYLOAD_SIZE];
+        unsigned char frag[MAX_PAYLOAD_SIZE];
         switch (s) {
             case OPENFILE:
                 switch(connectionParameters.role)
@@ -50,12 +57,12 @@ void stateMachine(enum state s) {
                 switch(connectionParameters.role)
                 {
                     case LlTx:
-                        int b;
-                        if (b = buildCtrlPck(CTRL_START)) {
+                        b_size = buildCtrlPck(CTRL_START);
+                        if (b_size < 0) {
                             llclose();
                             s = END;
                         }
-                        if (llwrite(ctrl_pck, b)) {
+                        if (llwrite(ctrl_pck, b_size) < 0) {
                             llclose();
                             s = END;
                         }
@@ -63,7 +70,6 @@ void stateMachine(enum state s) {
                         break;
                     case LlRx:
                         // ler o pacote de controlo escrito
-                        unsigned char packet[MAX_PAYLOAD_SIZE];
                         if (llread(packet) > 0)
                         {
                             unsigned char control = packet[0];
@@ -122,27 +128,27 @@ void stateMachine(enum state s) {
                 switch(connectionParameters.role)
                 {
                     case LlTx:
-                        unsigned char frag[MAX_PAYLOAD_SIZE];
-                        int r;
-                        if (r = readFragFile(frag)) {
-                            int b;
-                            // isto não funciona!! return é sempre >0 (retorna o tamanho do ficheiro) e assim termina a conexão!
-                            if (b = buildDataPck(frag, r)) {
+                        r_size = readFragFile(frag);
+                        if (r_size > 0)
+                        {
+                            b_size = buildDataPck(frag, r_size);
+                            if ((b_size < 0) || (llwrite(data_pck, b_size) < 0))
+                            {
                                 llclose();
                                 s = END;
                             }
-                            if (llwrite(data_pck, b)) {
-                                llclose();
-                                s = END;
-                            }
-                            s = END_PACKET;
                         }
+                        else if (r_size < 0)
+                        {
+                            llclose();
+                            s = END;     
+                        }
+                        else s = END_PACKET;
                         break;
                     case LlRx:
                         // ler o pacote de controlo escrito
-                        unsigned char packet[MAX_PAYLOAD_SIZE];
-                        int p_size;
-                        if ((p_size = llread(packet)) > 0)
+                        p_size = llread(packet);
+                        if (p_size > 0)
                         {
                             // if END packet, go to end
                             unsigned char control = packet[0];
@@ -152,9 +158,12 @@ void stateMachine(enum state s) {
                                 s = END;
                             }
                             // if DATA packet
-                            else
+                            else if (control == 2) // não é end nem start, é dados
                             {
-                                fwrite(packet, 1, p_size, rx_fptr);
+                                unsigned char l2 = packet[1];
+                                unsigned char l1 = packet[2];
+                                int d_size = (l2 * 256) + l1;
+                                fwrite(packet + 3, 1, d_size, rx_fptr);
                             }
                         }
                         break;
@@ -163,9 +172,11 @@ void stateMachine(enum state s) {
                 }
                 break;
             case END_PACKET:
-                int b;
-                b = buildCtrlPck(CTRL_END);
-                llwrite(ctrl_pck, b);
+                b_size = buildCtrlPck(CTRL_END);
+                if (llwrite(ctrl_pck, b_size) < 0)
+                {
+                    perror("erro a enviar END packet");
+                }
                 llclose();
                 s = END;
                 break;
@@ -264,7 +275,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     connectionParameters.role = role;
     connectionParameters.baudRate = baudRate;
     connectionParameters.nRetransmissions = nTries;
-    connectionParameters.timeout = timeout;
+    connectionParameters.timeout = timeout; 
 
     file_name = filename;
 
