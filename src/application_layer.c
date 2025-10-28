@@ -5,6 +5,7 @@
 
 #include <stdio.h>
 
+#define ERROR -1
 #define CTRL_START 1
 #define CTRL_END   3
 #define TYPE_FILESIZE 0
@@ -42,20 +43,16 @@ void stateMachine(enum state s) {
                     default:
                         return;
                 }
-                if (llopen(connectionParameters)) return;
+                if (llopen(connectionParameters) == ERROR) return;
                 s = START_PACKET;
                 break;
             case START_PACKET:
-                // isto não funciona!! return é sempre >0 (retorna o tamanho do ficheiro) e assim termina a conexão!
+            
                 switch(connectionParameters.role)
                 {
                     case LlTx:
-                        int b;
-                        if (b = buildCtrlPck(CTRL_START)) {
-                            llclose();
-                            s = END;
-                        }
-                        if (llwrite(ctrl_pck, b)) {
+                        int b = buildCtrlPck(CTRL_START);
+                        if (llwrite(ctrl_pck, b) == ERROR) {
                             llclose();
                             s = END;
                         }
@@ -123,20 +120,22 @@ void stateMachine(enum state s) {
                 {
                     case LlTx:
                         unsigned char frag[MAX_PAYLOAD_SIZE];
-                        int r;
-                        if (r = readFragFile(frag)) {
-                            int b;
-                            // isto não funciona!! return é sempre >0 (retorna o tamanho do ficheiro) e assim termina a conexão!
-                            if (b = buildDataPck(frag, r)) {
+                        int r = readFragFile(frag);
+
+                        if (r > 0) {
+                            int b = buildDataPck(frag, r);
+                            if (llwrite(data_pck, b) == ERROR) {
                                 llclose();
                                 s = END;
                             }
-                            if (llwrite(data_pck, b)) {
-                                llclose();
-                                s = END;
-                            }
+
+                        } else if (r == 0) {
                             s = END_PACKET;
+                        } else {
+                            llclose();
+                            s = END;
                         }
+
                         break;
                     case LlRx:
                         // ler o pacote de controlo escrito
@@ -199,7 +198,7 @@ int openFile() {
     if (fstat(fd, &st) == -1) {
         perror("Error obtaining file size");
         close(fd);
-        return -1;
+        return 1;
     }
 
     file_size = st.st_size;
