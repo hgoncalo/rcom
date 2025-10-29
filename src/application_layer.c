@@ -36,6 +36,7 @@ int rx_fsize = 0;
 int p_size = 0;
 char rx_fname[MAX_PAYLOAD_SIZE];
 FILE *rx_fptr;
+const char *rx_file_name;
 
 enum state {OPENFILE, START_PACKET, DATA_PACKET, END_PACKET, END};
 
@@ -47,16 +48,15 @@ int buildDataPck(unsigned char *frag, int frag_size);
 int readFragFile(unsigned char *frag);
 
 void appStateMachine(enum state s) {
-    printf("[SM] Starting appStateMachine with state = %d\n", s);
-
     while(s != END)
     {
+        printf("[ASM] CURRENT STATE = %d\n", s);
         unsigned char packet[MAX_PAYLOAD_SIZE];
         unsigned char frag[MAX_PAYLOAD_SIZE];
         switch (s) {
             case OPENFILE:
 
-                printf("[SM] Entered state OPENFILE\n");
+                printf("[ASM] Entered state OPENFILE\n");
 
                 switch(connectionParameters.role)
                 {
@@ -74,7 +74,7 @@ void appStateMachine(enum state s) {
                 break;
             case START_PACKET:
 
-                printf("[SM] Entered state START_PACKET\n");
+                printf("[ASM] Entered state START_PACKET\n");
             
                 switch(connectionParameters.role)
                 {
@@ -99,21 +99,25 @@ void appStateMachine(enum state s) {
                         break;
                     case LlRx:
                         // ler o pacote de controlo escrito
-                        printf("HERE HERE HERE\n");
-                        printf("Role: %d\n", connectionParameters.role);
-                        printf("Serial port: %s\n", connectionParameters.serialPort);
+                        //printf("HERE HERE HERE\n");
+                        //printf("Role: %d\n", connectionParameters.role);
+                        //printf("Serial port: %s\n", connectionParameters.serialPort);
                         int n = llread(packet);
-                        printf("llread returned: %d\n", n);
+                        printf("[VAR] PACKET READ = ");
+                        for (int i = 0; i < n; i++) {
+                            printf("%02X ", packet[i]);
+                        }
+                        printf("\nEND OF PACKET\n");
                         if (n > 0)
                         {
                             unsigned char control = packet[0];
-                            unsigned char *packet_aux = packet + 1;
-                            printf("First bytes: %02X %02X %02X\n", packet_aux[0], packet_aux[1], packet_aux[2]);
+                            //unsigned char *packet_aux = packet + 1;
+                            //printf("First bytes: %02X %02X %02X\n", packet_aux[0], packet_aux[1], packet_aux[2]);
                             if (control == CTRL_START) // start packet
                             {
                                 // extract name and size
-                                unsigned char l1, l2;
-                                packet_aux++;
+                                /*
+                                                                unsigned char l1, l2;
                                 if (*packet_aux == TYPE_FILESIZE)
                                 {
                                     packet_aux++;
@@ -134,18 +138,21 @@ void appStateMachine(enum state s) {
                                         l2 = *packet_aux;
                                         packet_aux++;
                                         
-                                        printf("l2 = %u\n", l2);    
-                                    
-                                        // como o nome também vem em vários bytes, fazemos um memcpy dá região
-                                        memcpy(rx_fname, packet_aux, l2);
-                                    
-                                        // terminar a string
-                                        rx_fname[l2] = '\0';
+                                        // OBS: NESTE MOMENTO ISTO NÃO FAZ SENTIDO, PQ NOME FICHEIRO RECEBIDO É DIF. DO ENVIADO
+                                        //printf("l2 = %u\n", l2);    
+                                    //
+                                        //// como o nome também vem em vários bytes, fazemos um memcpy dá região
+                                        //memcpy(rx_fname, packet_aux, l2);
+                                    //
+                                        //// terminar a string
+                                        //rx_fname[l2] = '\0';
                                     }
                                 }
+                                */
                             
                                 // create file
-                                rx_fptr = fopen(rx_fname, "wb");
+                                printf("Trying to create file: '%s'\n", rx_file_name);
+                                rx_fptr = fopen(rx_file_name, "wb");
                                 if (rx_fptr == NULL)
                                 {
                                     perror("erro ao criar ficheiro");
@@ -164,7 +171,7 @@ void appStateMachine(enum state s) {
                 break;
             case DATA_PACKET:
 
-                printf("[SM] Entered state DATA_PACKET\n");
+                printf("[ASM] Entered state DATA_PACKET\n");
 
                 switch(connectionParameters.role)
                 {
@@ -224,7 +231,7 @@ void appStateMachine(enum state s) {
                 }
                 break;
             case END_PACKET:
-                printf("[SM] Entered state END_PACKET\n");
+                printf("[ASM] Entered state END_PACKET\n");
 
                 b_size = buildCtrlPck(CTRL_END);
                 if (llwrite(ctrl_pck, b_size) < 0)
@@ -236,7 +243,7 @@ void appStateMachine(enum state s) {
                 break;
             case END:
 
-                printf("[SM] Entered state END\n");
+                printf("[ASM] Entered state END\n");
 
                 switch(connectionParameters.role)
                 {
@@ -252,15 +259,12 @@ void appStateMachine(enum state s) {
                 return;
         }
     }
-    printf("[SM] Exiting appStateMachine with state = %d\n", s);
+    printf("[ASM] Exiting appStateMachine with state = %d\n", s);
 }
 
-void parse_cmdLine(const char *serialPort, const char *role, int baudRate,
-                int nTries, int timeout, const char *filename) {
-    
-
+void parse_cmdLine(const char *serialPort, const char *role, int baudRate,int nTries, int timeout, const char *filename) 
+{
     strcpy(connectionParameters.serialPort, serialPort); // não podemos atribuir array a um array direto... temos que copiar a mem
-
     if (strcmp(role, "tx") == 0)
     {
         connectionParameters.role = LlTx;
@@ -274,13 +278,24 @@ void parse_cmdLine(const char *serialPort, const char *role, int baudRate,
         perror("not a valid role");
         return;
     }
-
     connectionParameters.baudRate = baudRate;
     connectionParameters.nRetransmissions = nTries;
     connectionParameters.timeout = timeout; 
 
-    file_name = filename;
+    switch(connectionParameters.role)
+    {
+        case LlTx:
+            file_name = filename;
+            break;
+        case LlRx:
+            rx_file_name = filename;
+            break;
+        default:
+            perror("role errada");
+            return;
+    }
 
+    return;
 }
 
 int openFile() {
