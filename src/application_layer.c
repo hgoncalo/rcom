@@ -36,6 +36,7 @@ int rx_fsize = 0;
 int p_size = 0;
 char rx_fname[MAX_PAYLOAD_SIZE];
 FILE *rx_fptr;
+const char *rx_file_name;
 
 enum state {OPENFILE, START_PACKET, DATA_PACKET, END_PACKET, END};
 
@@ -46,17 +47,33 @@ int buildCtrlPck(unsigned char control);
 int buildDataPck(unsigned char *frag, int frag_size);
 int readFragFile(unsigned char *frag);
 
-void appStateMachine(enum state s) {
-    printf("[SM] Starting appStateMachine with state = %d\n", s);
+// teste para comparar RX e TX
+void log_packet(const char *filename, unsigned char *packet, int size) {
+    FILE *f = fopen(filename, "ab"); // append, não sobrescreve
+    if (!f) {
+        perror("fopen");
+        return;
+    }
 
+    // opcional: grava tamanho do pacote antes do conteúdo
+    fwrite(&size, sizeof(int), 1, f);
+    for(int i=0;i<size;i++){
+        fprintf(f,"%02X ", packet[i]);
+    }
+    fprintf(f,"\n");
+    fclose(f);
+}
+
+void appStateMachine(enum state s) {
     while(s != END)
     {
+        //printf("[ASM] CURRENT STATE = %d\n", s);
         unsigned char packet[MAX_PAYLOAD_SIZE];
         unsigned char frag[MAX_PAYLOAD_SIZE];
         switch (s) {
             case OPENFILE:
 
-                printf("[SM] Entered state OPENFILE\n");
+                //printf("[ASM] Entered state OPENFILE\n");
 
                 switch(connectionParameters.role)
                 {
@@ -74,46 +91,54 @@ void appStateMachine(enum state s) {
                 break;
             case START_PACKET:
 
-                printf("[SM] Entered state START_PACKET\n");
+                //printf("[ASM] Entered state START_PACKET\n");
             
                 switch(connectionParameters.role)
                 {
                     case LlTx:
                         b_size = buildCtrlPck(CTRL_START);
 
-                        printf("[TX] Built START packet, size = %d\n", b_size);
+                        //printf("[TX] Built START packet, size = %d\n", b_size);
 
                         if (b_size < 0) {
-                            printf("[TX] llwrite START packet failed\n");
+                            //printf("[TX] llwrite START packet failed\n");
                             llclose();
                             s = END;
                         }
                         if (llwrite(ctrl_pck, b_size) < 0) {
-                            printf("[TX] llwrite START packet failed\n");
+                            //printf("[TX] llwrite START packet failed\n");
                             llclose();
                             s = END;
                         }
-                        printf("[TX] START packet sent\n");
+                        else
+                        {
+                            log_packet("tx_log.txt", ctrl_pck, b_size); 
+                        }
+                        //printf("[TX] START packet sent\n");
                         s = DATA_PACKET;
 
                         break;
                     case LlRx:
                         // ler o pacote de controlo escrito
-                        printf("HERE HERE HERE\n");
-                        printf("Role: %d\n", connectionParameters.role);
-                        printf("Serial port: %s\n", connectionParameters.serialPort);
+                        //printf("HERE HERE HERE\n");
+                        //printf("Role: %d\n", connectionParameters.role);
+                        //printf("Serial port: %s\n", connectionParameters.serialPort);
                         int n = llread(packet);
-                        printf("llread returned: %d\n", n);
+                        //printf("[VAR] PACKET READ = ");
+                        //for (int i = 0; i < n; i++) {
+                        //    printf("%02X ", packet[i]);
+                        //}
+                        //printf("\nEND OF PACKET\n");
                         if (n > 0)
                         {
                             unsigned char control = packet[0];
-                            unsigned char *packet_aux = packet + 1;
-                            printf("First bytes: %02X %02X %02X\n", packet_aux[0], packet_aux[1], packet_aux[2]);
+                            //unsigned char *packet_aux = packet + 1;
+                            //printf("First bytes: %02X %02X %02X\n", packet_aux[0], packet_aux[1], packet_aux[2]);
                             if (control == CTRL_START) // start packet
                             {
                                 // extract name and size
-                                unsigned char l1, l2;
-                                packet_aux++;
+                                /*
+                                                                unsigned char l1, l2;
                                 if (*packet_aux == TYPE_FILESIZE)
                                 {
                                     packet_aux++;
@@ -134,18 +159,21 @@ void appStateMachine(enum state s) {
                                         l2 = *packet_aux;
                                         packet_aux++;
                                         
-                                        printf("l2 = %u\n", l2);    
-                                    
-                                        // como o nome também vem em vários bytes, fazemos um memcpy dá região
-                                        memcpy(rx_fname, packet_aux, l2);
-                                    
-                                        // terminar a string
-                                        rx_fname[l2] = '\0';
+                                        // OBS: NESTE MOMENTO ISTO NÃO FAZ SENTIDO, PQ NOME FICHEIRO RECEBIDO É DIF. DO ENVIADO
+                                        //printf("l2 = %u\n", l2);    
+                                    //
+                                        //// como o nome também vem em vários bytes, fazemos um memcpy dá região
+                                        //memcpy(rx_fname, packet_aux, l2);
+                                    //
+                                        //// terminar a string
+                                        //rx_fname[l2] = '\0';
                                     }
                                 }
+                                */
                             
                                 // create file
-                                rx_fptr = fopen(rx_fname, "wb");
+                                //printf("Trying to create file: '%s'\n", rx_file_name);
+                                rx_fptr = fopen(rx_file_name, "wb");
                                 if (rx_fptr == NULL)
                                 {
                                     perror("erro ao criar ficheiro");
@@ -164,28 +192,32 @@ void appStateMachine(enum state s) {
                 break;
             case DATA_PACKET:
 
-                printf("[SM] Entered state DATA_PACKET\n");
+                //printf("[ASM] Entered state DATA_PACKET\n");
 
                 switch(connectionParameters.role)
                 {
                     case LlTx:
                         r_size = readFragFile(frag);
 
-                        printf("[TX] Read fragment: %d bytes\n", r_size);
+                        //printf("[TX] Read fragment: %d bytes\n", r_size);
 
                         if (r_size > 0)
                         {
                             b_size = buildDataPck(frag, r_size);
                             if ((b_size < 0) || (llwrite(data_pck, b_size) < 0))
                             {
-                                printf("[TX] llwrite DATA packet failed\n");
+                                //printf("[TX] llwrite DATA packet failed\n");
                                 llclose();
                                 s = END;
+                            }
+                            else
+                            {
+                                log_packet("tx_log.txt", data_pck, b_size);
                             }
                         }
                         else if (r_size < 0)
                         {
-                            printf("[TX] size DATA packet failed\n");
+                            //printf("[TX] size DATA packet failed\n");
                             llclose();
                             s = END;     
                         }
@@ -195,14 +227,15 @@ void appStateMachine(enum state s) {
                         // ler o pacote de controlo escrito
                         p_size = llread(packet);
 
-                        printf("[RX] llread returned %d bytes\n", p_size);
+                        //printf("[RX] llread returned %d bytes\n", p_size);
 
                         if (p_size > 0)
                         {
+                            log_packet("rx_log.txt", packet, p_size); 
                             // if END packet, go to end
                             unsigned char control = packet[0];
 
-                            printf("[RX] Control byte = %d\n", control);
+                            //printf("[RX] Control byte = %d\n", control);
                             if (control == CTRL_END) // end packet
                             {
                                 llclose();
@@ -213,7 +246,7 @@ void appStateMachine(enum state s) {
                             {
                                 unsigned char l2 = packet[1];
                                 unsigned char l1 = packet[2];
-                                int d_size = (l2 * 256) + l1;
+                                int d_size = (l2 << 8) | l1;
                                 unsigned char *packet_aux = packet + 3;
                                 fwrite(packet_aux, 1, d_size, rx_fptr);
                             }
@@ -224,7 +257,7 @@ void appStateMachine(enum state s) {
                 }
                 break;
             case END_PACKET:
-                printf("[SM] Entered state END_PACKET\n");
+                //printf("[ASM] Entered state END_PACKET\n");
 
                 b_size = buildCtrlPck(CTRL_END);
                 if (llwrite(ctrl_pck, b_size) < 0)
@@ -236,7 +269,7 @@ void appStateMachine(enum state s) {
                 break;
             case END:
 
-                printf("[SM] Entered state END\n");
+                //printf("[ASM] Entered state END\n");
 
                 switch(connectionParameters.role)
                 {
@@ -252,15 +285,12 @@ void appStateMachine(enum state s) {
                 return;
         }
     }
-    printf("[SM] Exiting appStateMachine with state = %d\n", s);
+    //printf("[ASM] Exiting appStateMachine with state = %d\n", s);
 }
 
-void parse_cmdLine(const char *serialPort, const char *role, int baudRate,
-                int nTries, int timeout, const char *filename) {
-    
-
+void parse_cmdLine(const char *serialPort, const char *role, int baudRate,int nTries, int timeout, const char *filename) 
+{
     strcpy(connectionParameters.serialPort, serialPort); // não podemos atribuir array a um array direto... temos que copiar a mem
-
     if (strcmp(role, "tx") == 0)
     {
         connectionParameters.role = LlTx;
@@ -274,13 +304,24 @@ void parse_cmdLine(const char *serialPort, const char *role, int baudRate,
         perror("not a valid role");
         return;
     }
-
     connectionParameters.baudRate = baudRate;
     connectionParameters.nRetransmissions = nTries;
     connectionParameters.timeout = timeout; 
 
-    file_name = filename;
+    switch(connectionParameters.role)
+    {
+        case LlTx:
+            file_name = filename;
+            break;
+        case LlRx:
+            rx_file_name = filename;
+            break;
+        default:
+            perror("role errada");
+            return;
+    }
 
+    return;
 }
 
 int openFile() {
@@ -329,9 +370,18 @@ int buildCtrlPck(unsigned char control) {
     return idx; //tamanho total do pacote, em bytes.
 }
 
-int buildDataPck(unsigned char *frag, int frag_size) {
-    int idx = 0;
+int buildDataPck(unsigned char *frag, int frag_size) 
+{
+    /*
+    if (frag_size > MAX_PAYLOAD_SIZE) 
+    {
+        frag_size = MAX_PAYLOAD_SIZE;
+    }
+    */
 
+    memset(data_pck, 0, sizeof(data_pck));
+    int idx = 0;
+    
     data_pck[idx++] = 2;
     data_pck[idx++] = (frag_size >> 8) & 0xFF;  // L2
     data_pck[idx++] = frag_size & 0xFF; //L1

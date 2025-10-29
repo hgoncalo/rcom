@@ -65,8 +65,8 @@ int getAType(LinkLayerRole role, int type);
 
 int validResponse(unsigned char byte)
 {
-    printf("Went here");
-    if (stateMachine(byte,START,WRITE,x_role,0)) return 1;
+    // Expect COMMAND (A_RX_C) from receiver for RR/REJ during WRITE
+    if (stateMachine(byte,START,WRITE,x_role,A_COMMAND)) return 1;
     else
     {
         // stateMachine got an valid answer
@@ -78,6 +78,7 @@ int validResponse(unsigned char byte)
 
 // LLREAD AUX
 unsigned char rx_packet[MAX_PAYLOAD_SIZE * 2 + 6];
+unsigned int rx_packet_len = 0; // stuffed payload length captured by state machine (includes BCC2, excludes FLAGs)
 
 /*
 // data will already be destuffed
@@ -88,7 +89,7 @@ unsigned char rx_packet[MAX_PAYLOAD_SIZE * 2 + 6];
 void writeSet()
 {
 
-    printf("[SM] Entered writeSet()\n");
+    //printf("[SM] Entered writeSet()\n");
 
 
     buf[0] = FLAG;
@@ -96,7 +97,7 @@ void writeSet()
     buf[2] = C_SET;
     buf[3] = buf[1] ^ buf[2];
     buf[4] = FLAG;
-    writeBytesSerialPort(buf, BUF_SIZE);
+    writeBytesSerialPort(buf, 5);
     //printf("Sent SET\n");
     sleep(1);
 }
@@ -108,7 +109,7 @@ void writeUa(int type)
     buf[2] = C_UA;
     buf[3] = buf[1] ^ buf[2];
     buf[4] = FLAG;
-    writeBytesSerialPort(buf, BUF_SIZE);
+    writeBytesSerialPort(buf, 5);
     //printf("SENT UA\n");
     sleep(1);
 }
@@ -120,7 +121,7 @@ void writeDisc(int type)
     buf[2] = C_DISC;
     buf[3] = buf[1] ^ buf[2];
     buf[4] = FLAG;
-    writeBytesSerialPort(buf, BUF_SIZE);
+    writeBytesSerialPort(buf, 5);
     //printf("Sent SET\n");
     sleep(1);
 }
@@ -141,15 +142,17 @@ int getAType(LinkLayerRole role, int type)
 
 void writeI()
 {
-
-    printf("[SM] Entered writeI()\n");
-
+    //printf("[SM] Entered writeI()\n");
 
     tx_fn = (tx_frame[2] != 0);
     writeBytesSerialPort(tx_frame,tx_buf_size);
     sleep(1);
 
-    printf("[SM] Exited writeI()\n");
+    //printf("[VAR] I WROTE FRAME = ");
+    //for (int i = 0; i < tx_buf_size; i++) {
+    //    printf("%02X ", tx_frame[i]);
+    //}
+    //printf("\n[SM] Exited writeI()\n");
 }
 
 void writeRR()
@@ -159,7 +162,7 @@ void writeRR()
     buf[2] = ((tx_fn == 0) ? C_RR1 : C_RR0); // ask for FN+1 (Ns+1)
     buf[3] = buf[1] ^ buf[2];
     buf[4] = FLAG;
-    writeBytesSerialPort(buf, BUF_SIZE);
+    writeBytesSerialPort(buf, 5);
     //printf("Sent RR\n");
     sleep(1);
 }
@@ -171,7 +174,7 @@ void writeREJ()
     buf[2] = ((tx_fn == 0) ? C_REJ0 : C_REJ1);
     buf[3] = buf[1] ^ buf[2];
     buf[4] = FLAG;
-    writeBytesSerialPort(buf, BUF_SIZE);
+    writeBytesSerialPort(buf, 5);
     //printf("Sent REJ\n");
     sleep(1);
 }
@@ -180,12 +183,12 @@ void alarmHandler(int signal)
 {
     alarmEnabled = FALSE;
     alarmCount++;
-    printf("Alarm #%d received\n", alarmCount);
+    //printf("Alarm #%d received\n", alarmCount);
 }
 
 int txAlarm(unsigned char* byte, enum alarm_state as)
 {
-    printf("[SM] Entered txAlarm()\n");
+    //printf("[SM] Entered txAlarm()\n");
 
     while (alarmCount < 4)
     {
@@ -200,7 +203,7 @@ int txAlarm(unsigned char* byte, enum alarm_state as)
                     writeI();
                     break;
                 default:
-                    printf("NOT A DEFINED STATE\n");
+                    //printf("NOT A DEFINED STATE\n");
                     return 1;
             }
             alarm(3); // Set alarm to be triggered in 3s
@@ -212,21 +215,24 @@ int txAlarm(unsigned char* byte, enum alarm_state as)
             switch(as)
             {
                 case ALARM_WRITE:
-                    printf("[SM] Entered ALARM_WRITE Case\n");
+                    //printf("[SM] Entered ALARM_WRITE Case\n");
                     if (bytesRead > 0 && (validResponse(*byte) == 0))
                     {
-                        printf("var = 0x%02X\n", *byte);
                         //printf("EXITED ALARM");
                         alarmEnabled = FALSE;
                         alarmCount = 0;
 
-                        printf("[SM] txAlarm exited with 0\n");
+                        //printf("[SM] txAlarm exited with 0\n");
                         return 0;
                     }
-                    else printf("INVALID RESPONSE\n");
+                    else
+                    {
+                        //printf("INVALID RESPONSE\n");
+                        pause(); // espera pelo handler
+                    }
                     break;
                 case ALARM_OPEN:
-                    printf("[SM] Entered ALARM_OPEN Case\n");
+                    //printf("[SM] Entered ALARM_OPEN Case\n");
                     if (bytesRead > 0)
                     {
                         //printf("var = 0x%02X\n", *byte);
@@ -247,7 +253,7 @@ int txAlarm(unsigned char* byte, enum alarm_state as)
     }
     if (alarmCount == 4)
     {
-        printf("ALL 4 TRIES FAILED!");
+        //printf("ALL 4 TRIES FAILED!");
         return 1;
     }
     else return 0;
@@ -261,17 +267,18 @@ int stateMachine(unsigned char byte, enum state s, enum machine_state ms, LinkLa
 
     while (s != STOP)
     {
+        //printf("[VAR] SM RECIEVED VAR = 0x%02X\n", byte);
         switch(s)
         {
             case START:
-                printf("SM START\n");
+                //printf("SM START\n");
                 if (byte == FLAG)
                 {
                     s = FLAG_RCV;
                 }
                 break;
             case FLAG_RCV:
-                printf("SM FLAG_RCV\n");
+                //printf("SM FLAG_RCV\n");
                 a = byte;
                 // se transmissor: quero ler COMANDOS (0x01) ou RESPOSTAS (0x03) do RECIEVER, se for Rx quero ler COMANDOS (0x03) ou RESPOSTAS (0x01) do TRANSMISSOR
                 if ((byte == 0x01 && role == LlTx && type == A_COMMAND) || 
@@ -287,7 +294,7 @@ int stateMachine(unsigned char byte, enum state s, enum machine_state ms, LinkLa
                 }
                 break;
             case A_RCV:
-                printf("SM A_RCV\n");
+                //printf("SM A_RCV\n");
                 c = byte;
                 switch(ms)
                 {
@@ -338,12 +345,12 @@ int stateMachine(unsigned char byte, enum state s, enum machine_state ms, LinkLa
                         }
                         break;
                     default:
-                        printf("NOT A DEFINED STATE\n");
+                        //printf("NOT A DEFINED STATE\n");
                         return 1;
                 }
                 break;
             case C_RCV:
-                printf("SM C_RCV\n");
+                //printf("SM C_RCV\n");
                 if (byte == (a ^ c))
                 {
                     s = BCC_OK;
@@ -358,7 +365,7 @@ int stateMachine(unsigned char byte, enum state s, enum machine_state ms, LinkLa
                 }
                 break;
             case BCC_OK:
-                printf("SM BCC\n");
+                //printf("SM BCC\n");
                 switch(ms)
                 {
                     // open,write have the same cases
@@ -386,8 +393,12 @@ int stateMachine(unsigned char byte, enum state s, enum machine_state ms, LinkLa
                                 // HALT
                                 s = STOP;
 
-                                // Copiar p/ buffer global, pq P é local e será destruido
+                                p[p_index] = byte;
+                                p_index++;
+
+                                // Copy stuffed payload into global buffer and record its length
                                 memcpy(rx_packet, p, p_index);
+                                rx_packet_len = (unsigned int)p_index;
                             }
                             else
                             {
@@ -399,17 +410,17 @@ int stateMachine(unsigned char byte, enum state s, enum machine_state ms, LinkLa
                         else
                         {
                             // ignore or send RR(Ns)
-                            s = START;
+                            return 1;
                             // voltar ao inicio ignora a trama (o emissor toma iniciativa de mandar de novo)
                         }
                         break;
                     default:
-                        printf("NOT A DEFINED STATE\n");
+                        //printf("NOT A DEFINED STATE\n");
                         return 1;
                 }
                 break;
             default:
-                printf("NOT A DEFINED STATE\n");
+                //printf("NOT A DEFINED STATE\n");
                 return 1;
         }
         if (s != STOP)
@@ -438,7 +449,7 @@ int llopen(LinkLayer connectionParameters)
         perror("openSerialPort");
         exit(-1);
     }
-    printf("Serial port %s opened\n", serialPort);
+    //printf("Serial port %s opened\n", serialPort);
 
     switch(connectionParameters.role)
     {
@@ -471,9 +482,11 @@ int llopen(LinkLayer connectionParameters)
             writeUa(A_REPLY);
             break;
         default:
-            printf("Invalid role\n");
+            //printf("Invalid role\n");
             return 1;
     }
+
+    //printf("[SM] LLOPEN() WAS SUCCESSFUL!\n");
     return 0;
 }
 
@@ -483,7 +496,7 @@ int llopen(LinkLayer connectionParameters)
 int llwrite(const unsigned char *buf, int bufSize)
 {
 
-    printf("[SM] Entered llwrite()\n");
+    //printf("[SM] Entered llwrite()\n");
 
     // tamanho do vetor 2*max_payload_size + 6
     // max_payload_size é 1000
@@ -512,17 +525,19 @@ int llwrite(const unsigned char *buf, int bufSize)
 
     //PERCORRER OS DADOS E FAZER O BYTE STUFFING
     unsigned char currentByte;
-    for (int i=0; i<bufSize; i++) { //vou ler 2 de em 2 bytes
-        currentByte = buf[i];
-        bcc2 ^= currentByte;
 
+    // Percorrer os dados e fazer o byte stuffing
+    for (int i = 0; i < bufSize; i++) {
+        currentByte = buf[i];
+        bcc2 ^= currentByte; // calcular BCC
+        //printf("[VAR] STUFFED CURRENT VAR = 0x%02X\n", currentByte);
         byte_stuffing(&currentByte, frame, &frame_size);
     }
 
-    //ADICIONAR AS FLAGS NO FINAL
-    frame[frame_size-1] = bcc2;
-    frame[frame_size] = FLAG;
-    frame_size += 2;
+    // adiciona o BCC2 e faz o stuffing do BCC2
+    //printf("[VAR] BCC2 BEFORE STUFFING = 0x%02X\n", bcc2);
+    byte_stuffing(&bcc2, frame, &frame_size);
+    frame[frame_size++] = 0x7E;
     //O VETOR ESTA PRONTO
 
     // Escrever Frame e Receber o READ
@@ -543,8 +558,7 @@ int llwrite(const unsigned char *buf, int bufSize)
     // write I and expect ACK
     if (txAlarm(&byte, ALARM_WRITE)) return 1;
 
-    printf("[SM] Left llwrite() with return 0\n");
-
+    //printf("[SM] LLWRITE() WAS SUCCESSFUL!\n");
     return 0;
 
 }
@@ -604,6 +618,7 @@ int checkBCC2(unsigned char* rx_packet, int size)
     for (int i = 0; i < size; i++)
     {
         unsigned char byte = rx_packet[i];
+        //printf("[VAR] DESTUFFED CURRENT VAR = 0x%02X\n", byte);
         bcc2_acc ^= byte; 
     }
 
@@ -615,9 +630,23 @@ int checkBCC2(unsigned char* rx_packet, int size)
 
 int llread(unsigned char *packet)
 {
+    // wait for something
+    unsigned char byte;
+    readByteSerialPort(&byte);
+
+    if (stateMachine(byte,START,READ,x_role,0))
+    {
+        writeREJ();
+        //printf("[SM] LLREAD() SENT REJ VIA SM!\n");
+        return -1;
+    }
+    //else printf("[SM] LLREAD GOT AN OKAY SM!\n");
+
+    // received something
     int flag = 0;
-    unsigned int index = 4, size = 0; // começar o check a partir dos dados (Depois do FLAG,A,C,BCC1)
-     
+    unsigned int index = 0, size = 0; // destuffed payload size will be stored in 'size'
+
+    //printf("RX_PACKET_LEN: %d\n", rx_packet_len);
     while (flag != 1) {
         if (size >= (MAX_PAYLOAD_SIZE * 2 + 6)) return 1;
         flag = byte_destuffing(rx_packet, &index, &size);
@@ -627,14 +656,19 @@ int llread(unsigned char *packet)
     {
         // send REJ(tx_fn)
         writeREJ();
+        //printf("[SM] LLREAD() SENT REJ!\n");
         return -1;
     }
     else
     {
         // send RR(tx_fn + 1)
         writeRR();
-        memcpy(packet,rx_packet,size - 1); //exclui o bcc2 (só passa a data)
-        return size-1;
+
+        // o problema vem daqui... isto prob está a truncar dados
+        int copy_size = (size - 1 > MAX_PAYLOAD_SIZE) ? MAX_PAYLOAD_SIZE : size - 1;
+        memcpy(packet, rx_packet, copy_size);
+        //printf("[SM] LLREAD() WAS SUCCESSFUL!\n");
+        return copy_size;
     }
 }
 
@@ -671,7 +705,7 @@ int llclose()
             stateMachine(byte,START,CLOSE,x_role,A_REPLY);
             break;
         default:
-            printf("Invalid role\n");
+            //printf("Invalid role\n");
             return 1;
     }
 
@@ -681,13 +715,9 @@ int llclose()
         exit(-1);
     }
 
-    printf("Serial port %s closed\n", serialPort);
+    //printf("Serial port %s closed\n", serialPort);
+    //printf("[SM] LLCLOSE() WAS SUCCESSFUL!\n");
 
     return 0;
 }
 
-// OBS : 
-/*
-    1) Verificar replies e comandos? está certo o mecanismo atual?
-    2) é preciso só retransmitir frames ou SET's, DISC's, UA's também são precisos?
-*/

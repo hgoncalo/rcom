@@ -1,0 +1,2 @@
+gcc -Wall -o bin//main src//application_layer.c src//link_layer.c src//main.c src//serial_port.c
+./bin//main /dev/ttyS10 9600 tx penguin.gif
