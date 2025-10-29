@@ -65,6 +65,7 @@ int getAType(LinkLayerRole role, int type);
 
 int validResponse(unsigned char byte)
 {
+    printf("Went here");
     if (stateMachine(byte,START,WRITE,x_role,0)) return 1;
     else
     {
@@ -76,7 +77,7 @@ int validResponse(unsigned char byte)
 }
 
 // LLREAD AUX
-unsigned char *rx_packet;
+unsigned char rx_packet[MAX_PAYLOAD_SIZE * 2 + 6];
 
 /*
 // data will already be destuffed
@@ -186,7 +187,6 @@ int txAlarm(unsigned char* byte, enum alarm_state as)
 {
     printf("[SM] Entered txAlarm()\n");
 
-
     while (alarmCount < 4)
     {
         if (alarmEnabled == FALSE)
@@ -203,10 +203,8 @@ int txAlarm(unsigned char* byte, enum alarm_state as)
                     printf("NOT A DEFINED STATE\n");
                     return 1;
             }
-            
             alarm(3); // Set alarm to be triggered in 3s
             alarmEnabled = TRUE;
-
         }
         else if (alarmEnabled == TRUE)
         {
@@ -214,36 +212,28 @@ int txAlarm(unsigned char* byte, enum alarm_state as)
             switch(as)
             {
                 case ALARM_WRITE:
-
                     printf("[SM] Entered ALARM_WRITE Case\n");
-
-
                     if (bytesRead > 0 && (validResponse(*byte) == 0))
                     {
-                        //printf("var = 0x%02X\n", *byte);
+                        printf("var = 0x%02X\n", *byte);
                         //printf("EXITED ALARM");
                         alarmEnabled = FALSE;
                         alarmCount = 0;
 
                         printf("[SM] txAlarm exited with 0\n");
-
                         return 0;
                     }
+                    else printf("INVALID RESPONSE\n");
                     break;
                 case ALARM_OPEN:
-
                     printf("[SM] Entered ALARM_OPEN Case\n");
-
                     if (bytesRead > 0)
                     {
                         //printf("var = 0x%02X\n", *byte);
                         //printf("EXITED ALARM");
                         alarmEnabled = FALSE;
                         alarmCount = 0;
-
-                        printf("[SM] txAlarm exited with 0\n");
-
-
+                        //printf("[SM] txAlarm exited with 0\n");
                         return 0;
                     }
                     break;
@@ -274,12 +264,14 @@ int stateMachine(unsigned char byte, enum state s, enum machine_state ms, LinkLa
         switch(s)
         {
             case START:
+                printf("SM START\n");
                 if (byte == FLAG)
                 {
                     s = FLAG_RCV;
                 }
                 break;
             case FLAG_RCV:
+                printf("SM FLAG_RCV\n");
                 a = byte;
                 // se transmissor: quero ler COMANDOS (0x01) ou RESPOSTAS (0x03) do RECIEVER, se for Rx quero ler COMANDOS (0x03) ou RESPOSTAS (0x01) do TRANSMISSOR
                 if ((byte == 0x01 && role == LlTx && type == A_COMMAND) || 
@@ -295,6 +287,7 @@ int stateMachine(unsigned char byte, enum state s, enum machine_state ms, LinkLa
                 }
                 break;
             case A_RCV:
+                printf("SM A_RCV\n");
                 c = byte;
                 switch(ms)
                 {
@@ -350,6 +343,7 @@ int stateMachine(unsigned char byte, enum state s, enum machine_state ms, LinkLa
                 }
                 break;
             case C_RCV:
+                printf("SM C_RCV\n");
                 if (byte == (a ^ c))
                 {
                     s = BCC_OK;
@@ -364,6 +358,7 @@ int stateMachine(unsigned char byte, enum state s, enum machine_state ms, LinkLa
                 }
                 break;
             case BCC_OK:
+                printf("SM BCC\n");
                 switch(ms)
                 {
                     // open,write have the same cases
@@ -455,7 +450,7 @@ int llopen(LinkLayer connectionParameters)
                 perror("sigaction");
                 exit(1);
             }
-            printf("Alarm configured\n");
+            //printf("Alarm configured\n");
 
             // write set
             if (txAlarm(&byte,ALARM_OPEN))
@@ -543,7 +538,7 @@ int llwrite(const unsigned char *buf, int bufSize)
         perror("sigaction");
         exit(1);
     }
-    printf("Alarm configured\n");
+    //printf("Alarm configured\n");
     
     // write I and expect ACK
     if (txAlarm(&byte, ALARM_WRITE)) return 1;
@@ -556,9 +551,7 @@ int llwrite(const unsigned char *buf, int bufSize)
 
 void byte_stuffing (unsigned char *currentbyte, unsigned char *vector, unsigned int *size) {
 
-    printf("[SM] Entered byte_stuffing()\n");
-    printf("[SM] Entered byte_stuffing()\n");
-    printf("[SM] Entered byte_stuffing()\n");
+    //printf("[SM] Entered byte_stuffing()\n");
 
     if (*currentbyte == FLAG) {
         vector[*size] = 0x7D; //ESC
@@ -573,9 +566,7 @@ void byte_stuffing (unsigned char *currentbyte, unsigned char *vector, unsigned 
         (*size)++;
     }
 
-    printf("[SM] Left byte_stuffing()\n");
-    printf("[SM] Left byte_stuffing()\n");
-    printf("[SM] Left byte_stuffing()\n");
+    //printf("[SM] Left byte_stuffing()\n");
 }
 
 ////////////////////////////////////////////////

@@ -48,9 +48,6 @@ int readFragFile(unsigned char *frag);
 
 void appStateMachine(enum state s) {
     printf("[SM] Starting appStateMachine with state = %d\n", s);
-    printf("[SM] Starting appStateMachine with state = %d\n", s);
-    printf("[SM] Starting appStateMachine with state = %d\n", s);
-
 
     while(s != END)
     {
@@ -59,12 +56,6 @@ void appStateMachine(enum state s) {
         switch (s) {
             case OPENFILE:
 
-                printf("[SM] Entered state OPENFILE\n");
-                printf("[SM] Entered state OPENFILE\n");
-                printf("[SM] Entered state OPENFILE\n");
-                printf("[SM] Entered state OPENFILE\n");
-                printf("[SM] Entered state OPENFILE\n");
-                printf("[SM] Entered state OPENFILE\n");
                 printf("[SM] Entered state OPENFILE\n");
 
                 switch(connectionParameters.role)
@@ -84,12 +75,6 @@ void appStateMachine(enum state s) {
             case START_PACKET:
 
                 printf("[SM] Entered state START_PACKET\n");
-                printf("[SM] Entered state START_PACKET\n");
-                printf("[SM] Entered state START_PACKET\n");
-                printf("[SM] Entered state START_PACKET\n");
-                printf("[SM] Entered state START_PACKET\n");
-                printf("[SM] Entered state START_PACKET\n");
-
             
                 switch(connectionParameters.role)
                 {
@@ -99,6 +84,7 @@ void appStateMachine(enum state s) {
                         printf("[TX] Built START packet, size = %d\n", b_size);
 
                         if (b_size < 0) {
+                            printf("[TX] llwrite START packet failed\n");
                             llclose();
                             s = END;
                         }
@@ -113,10 +99,16 @@ void appStateMachine(enum state s) {
                         break;
                     case LlRx:
                         // ler o pacote de controlo escrito
-                        if (llread(packet) > 0)
+                        printf("HERE HERE HERE\n");
+                        printf("Role: %d\n", connectionParameters.role);
+                        printf("Serial port: %s\n", connectionParameters.serialPort);
+                        int n = llread(packet);
+                        printf("llread returned: %d\n", n);
+                        if (n > 0)
                         {
                             unsigned char control = packet[0];
                             unsigned char *packet_aux = packet + 1;
+                            printf("First bytes: %02X %02X %02X\n", packet_aux[0], packet_aux[1], packet_aux[2]);
                             if (control == CTRL_START) // start packet
                             {
                                 // extract name and size
@@ -141,6 +133,8 @@ void appStateMachine(enum state s) {
                                         packet_aux++;
                                         l2 = *packet_aux;
                                         packet_aux++;
+                                        
+                                        printf("l2 = %u\n", l2);    
                                     
                                         // como o nome também vem em vários bytes, fazemos um memcpy dá região
                                         memcpy(rx_fname, packet_aux, l2);
@@ -171,14 +165,6 @@ void appStateMachine(enum state s) {
             case DATA_PACKET:
 
                 printf("[SM] Entered state DATA_PACKET\n");
-                printf("[SM] Entered state DATA_PACKET\n");
-                printf("[SM] Entered state DATA_PACKET\n");
-                printf("[SM] Entered state DATA_PACKET\n");
-                printf("[SM] Entered state DATA_PACKET\n");
-                printf("[SM] Entered state DATA_PACKET\n");
-                printf("[SM] Entered state DATA_PACKET\n");
-                printf("[SM] Entered state DATA_PACKET\n");
-
 
                 switch(connectionParameters.role)
                 {
@@ -186,22 +172,20 @@ void appStateMachine(enum state s) {
                         r_size = readFragFile(frag);
 
                         printf("[TX] Read fragment: %d bytes\n", r_size);
-                        printf("[TX] Read fragment: %d bytes\n", r_size);
-                        printf("[TX] Read fragment: %d bytes\n", r_size);
-
-
 
                         if (r_size > 0)
                         {
                             b_size = buildDataPck(frag, r_size);
                             if ((b_size < 0) || (llwrite(data_pck, b_size) < 0))
                             {
+                                printf("[TX] llwrite DATA packet failed\n");
                                 llclose();
                                 s = END;
                             }
                         }
                         else if (r_size < 0)
                         {
+                            printf("[TX] size DATA packet failed\n");
                             llclose();
                             s = END;     
                         }
@@ -211,10 +195,7 @@ void appStateMachine(enum state s) {
                         // ler o pacote de controlo escrito
                         p_size = llread(packet);
 
-
                         printf("[RX] llread returned %d bytes\n", p_size);
-                        printf("[RX] llread returned %d bytes\n", p_size);
-
 
                         if (p_size > 0)
                         {
@@ -222,9 +203,6 @@ void appStateMachine(enum state s) {
                             unsigned char control = packet[0];
 
                             printf("[RX] Control byte = %d\n", control);
-                            printf("[RX] Control byte = %d\n", control);
-
-
                             if (control == CTRL_END) // end packet
                             {
                                 llclose();
@@ -246,15 +224,7 @@ void appStateMachine(enum state s) {
                 }
                 break;
             case END_PACKET:
-                
-
                 printf("[SM] Entered state END_PACKET\n");
-                printf("[SM] Entered state END_PACKET\n");
-                printf("[SM] Entered state END_PACKET\n");
-                printf("[SM] Entered state END_PACKET\n");
-                printf("[SM] Entered state END_PACKET\n");
-                printf("[SM] Entered state END_PACKET\n");
-
 
                 b_size = buildCtrlPck(CTRL_END);
                 if (llwrite(ctrl_pck, b_size) < 0)
@@ -267,13 +237,6 @@ void appStateMachine(enum state s) {
             case END:
 
                 printf("[SM] Entered state END\n");
-                printf("[SM] Entered state END\n");
-                printf("[SM] Entered state END\n");
-                printf("[SM] Entered state END\n");
-                printf("[SM] Entered state END\n");
-                printf("[SM] Entered state END\n");
-
-
 
                 switch(connectionParameters.role)
                 {
