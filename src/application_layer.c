@@ -25,7 +25,7 @@ int tx_fd;
 off_t file_size;
 
 unsigned char ctrl_pck[MAX_PAYLOAD_SIZE];
-unsigned char data_pck[MAX_PAYLOAD_SIZE + 3];   // 1 byte C + 2 bytes L2L1 + dados
+unsigned char data_pck[MAX_PAYLOAD_SIZE];   // 1 byte C + 2 bytes L2L1 + dados
 
 // tx aux
 int b_size = 0;
@@ -386,14 +386,16 @@ int buildDataPck(unsigned char *frag, int frag_size)
     data_pck[idx++] = (frag_size >> 8) & 0xFF;  // L2
     data_pck[idx++] = frag_size & 0xFF; //L1
 
-    memcpy(&data_pck[idx], frag, (unsigned char) frag_size);
+    // se tivesse unsigned char convertia o frag a 8 bits!!! (de 0 a 256 no max)
+    // estavamos a forçar um inteiro 1000 a caber em 8 bits...
+    memcpy(&data_pck[idx], frag, frag_size);
     idx += frag_size;
     
     return idx; //tamanho total do pacote, em bytes.
 }
 
 int readFragFile(unsigned char *frag) {
-    int n = read(tx_fd, frag, MAX_PAYLOAD_SIZE);
+    int n = read(tx_fd, frag, MAX_PAYLOAD_SIZE - 3);
     if (n < 0) {
         perror("Error reading file");
         return -1;
