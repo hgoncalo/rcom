@@ -35,13 +35,39 @@
 // Atenção: .X_! onde . é T/R (transmissor ou recetor)
 // E ! é C/R (Command ou Reply)
 
-enum state {START, FLAG_RCV, A_RCV, C_RCV, BCC_OK, STOP}; 
-enum alarm_state {ALARM_OPEN, ALARM_WRITE, ALARM_CLOSE};
-enum machine_state {OPEN, WRITE, READ, CLOSE};
+// States of the frame transmission
+enum state
+{
+    START,
+    FLAG_RCV,
+    A_RCV,
+    C_RCV,
+    BCC_OK,
+    STOP
+};
+
+// Type of alarm
+enum alarm_state
+{
+    ALARM_OPEN,
+    ALARM_WRITE,
+    ALARM_CLOSE
+};
+
+// State of the program
+enum machine_state
+{
+    OPEN,
+    WRITE,
+    READ,
+    CLOSE
+};
 
 void writeSet();
 void writeUa();
 void alarmHandler();
+int checkBCC2();
+
 // Tx state machine
 int stateMachine(unsigned char byte, enum state s, enum machine_state ms, LinkLayerRole role, int type);
 
@@ -66,38 +92,32 @@ int getAType(LinkLayerRole role, int type);
 int validResponse(unsigned char byte)
 {
     // Expect COMMAND (A_RX_C) from receiver for RR/REJ during WRITE
-    if (stateMachine(byte,START,WRITE,x_role,A_COMMAND)) return -1;
+    if (stateMachine(byte, START, WRITE, x_role, A_COMMAND))
+        return -1;
     else
     {
         // stateMachine got an valid answer
-        if (rx_answer == C_REJ0 || rx_answer == C_REJ1) return 1; // rej
-        if (rx_answer == C_RR0 || rx_answer == C_RR1) return 0; // ack
-        else return -1;
+        if (rx_answer == C_REJ0 || rx_answer == C_REJ1)
+            return 1;
+        if (rx_answer == C_RR0 || rx_answer == C_RR1)
+            return 0;
+        else
+            return -1;
     }
 }
 
 // LLREAD AUX
 unsigned char rx_packet[MAX_PAYLOAD_SIZE * 2 + 6];
-unsigned int rx_packet_len = 0; // stuffed payload length captured by state machine (includes BCC2, excludes FLAGs)
+unsigned int rx_packet_len = 0; // stuffed payload length captured by state machine (includes BCC2, excludes FLAGs
 
-/*
-// data will already be destuffed
-
-*/
-
-// otimizar este código numa func. única?
 void writeSet()
 {
-
-    // printf("[SM] Entered writeSet()\n");
-
     buf[0] = FLAG;
     buf[1] = A_TX_C;
     buf[2] = C_SET;
     buf[3] = buf[1] ^ buf[2];
     buf[4] = FLAG;
     writeBytesSerialPort(buf, 5);
-    // printf("Sent SET\n");
     sleep(1);
 }
 
@@ -109,7 +129,6 @@ void writeUa(int type)
     buf[3] = buf[1] ^ buf[2];
     buf[4] = FLAG;
     writeBytesSerialPort(buf, 5);
-    // printf("SENT UA\n");
     sleep(1);
 }
 
@@ -121,7 +140,6 @@ void writeDisc(int type)
     buf[3] = buf[1] ^ buf[2];
     buf[4] = FLAG;
     writeBytesSerialPort(buf, 5);
-    // printf("Sent SET\n");
     sleep(1);
 }
 
@@ -145,18 +163,9 @@ int getAType(LinkLayerRole role, int type)
 
 void writeI()
 {
-    // printf("[SM] Entered writeI()\n");
-
     tx_fn = (tx_frame[2] != 0);
     writeBytesSerialPort(tx_frame, tx_buf_size);
-    printf("Sent frame %d \n", tx_fn);
     sleep(1);
-
-    // printf("[VAR] I WROTE FRAME = ");
-    // for (int i = 0; i < tx_buf_size; i++) {
-    //     printf("%02X ", tx_frame[i]);
-    // }
-    // printf("\n[SM] Exited writeI()\n");
 }
 
 void writeRR()
@@ -164,17 +173,11 @@ void writeRR()
     unsigned char buf[5];
     buf[0] = FLAG;
     buf[1] = A_RX_C;
-    buf[2] = (rx_fn == 0 ? C_RR1 : C_RR0); // pede o próximo frame (Ns + 1)
+    buf[2] = (rx_fn == 0 ? C_RR1 : C_RR0);
     buf[3] = buf[1] ^ buf[2];
     buf[4] = FLAG;
 
     writeBytesSerialPort(buf, 5);
-
-    if (buf[2] == C_RR0)
-        printf("Sent RR0\n");
-    else
-        printf("Sent RR1\n");
-
     sleep(1);
 }
 
@@ -183,17 +186,11 @@ void writeREJ()
     unsigned char buf[5];
     buf[0] = FLAG;
     buf[1] = A_RX_C;
-    buf[2] = (rx_fn == 0 ? C_REJ0 : C_REJ1); // rejeita o mesmo Ns
+    buf[2] = (rx_fn == 0 ? C_REJ0 : C_REJ1);
     buf[3] = buf[1] ^ buf[2];
     buf[4] = FLAG;
 
     writeBytesSerialPort(buf, 5);
-
-    if (buf[2] == C_REJ0)
-        printf("Sent REJ0\n");
-    else
-        printf("Sent REJ1\n");
-
     sleep(1);
 }
 
@@ -201,41 +198,30 @@ void alarmHandler(int signal)
 {
     alarmEnabled = FALSE;
     alarmCount++;
-    //printf("Alarm #%d received\n", alarmCount);
-    printf("[TX] Timeout -> retransmitting last frame, alarmCount: %d\n", alarmCount);
+    //printf("[TX] Timeout -> retransmitting last frame, alarmCount: %d\n", alarmCount);
 }
 
 int txAlarm(unsigned char *byte, enum alarm_state as)
 {
-
-
     while (alarmCount < 4)
     {
         if (alarmEnabled == FALSE)
         {
             switch (as)
             {
-                case ALARM_OPEN:
+            case ALARM_OPEN:
+                writeSet();
+                break;
+            case ALARM_WRITE:
+                writeI();
+                break;
 
-                    printf("[SM] Alarm Open Case\n");
+            case ALARM_CLOSE:
+                writeDisc(A_COMMAND);
+                break;
 
-                    writeSet();
-                    break;
-                case ALARM_WRITE:
-                    printf("[SM] Alarm Write Case\n");
-
-                    writeI();
-                    break;
-
-                case ALARM_CLOSE:
-                    printf("[SM] Alarm Close Case\n");
-                    
-                    writeDisc(A_COMMAND);
-                    break;
-                    
-                default:
-                    //printf("NOT A DEFINED STATE\n");
-                    return 1;
+            default:
+                return 1;
             }
             alarm(3); // Set alarm to be triggered in 3s
             alarmEnabled = TRUE;
@@ -245,71 +231,53 @@ int txAlarm(unsigned char *byte, enum alarm_state as)
             int bytesRead = readByteSerialPort(byte);
             switch (as)
             {
-                case ALARM_WRITE:
-                    if (bytesRead > 0)
-                    {
-                        int vr = validResponse(*byte);
-                        //printf("[SM] Entered ALARM_WRITE Case\n");
-                        if (vr == 0)
-                        {
-                            printf("[TX] Received RR -> continuing\n");
-                            alarmEnabled = FALSE;
-                            alarmCount = 0;
-                            return 0;
-                        }
-                        else if (vr == 1)
-                        {
-                            printf("[TX] Received REJ -> retransmitting\n");
-                            alarmEnabled = FALSE;
-                            // don't reset alarmCount, as it's a new try
-                        }
-                        else
-                        {
-                            //printf("INVALID RESPONSE\n");
-                            pause(); // espera pelo handler
-                        }
-                    }
-                    break;
-                case ALARM_OPEN:
-                    //printf("[SM] Entered ALARM_OPEN Case\n");
-                    if (bytesRead > 0)
-                    {
-                        //printf("var = 0x%02X\n", *byte);
-                        //printf("EXITED ALARM");
-                        alarmEnabled = FALSE;
-                        alarmCount = 0;
-                        //printf("[SM] txAlarm exited with 0\n");
-                        return 0;
-                    }
-                    break;
-
-                case ALARM_CLOSE:
-                    printf("[SM] Entered ALARM_CLOSE Case\n");
-                    printf("[SM] Alarm Count = %d\n", alarmCount);
-                    if (bytesRead > 0)
+            case ALARM_WRITE:
+                if (bytesRead > 0)
+                {
+                    int vr = validResponse(*byte);
+                    if (vr == 0)
                     {
                         alarmEnabled = FALSE;
                         alarmCount = 0;
                         return 0;
                     }
-                    break;
+                    else if (vr == 1)
+                    {
+                        alarmEnabled = FALSE;
+                    }
+                    else
+                    {
+                        pause(); // waits for the handler
+                    }
+                }
+                break;
+            case ALARM_OPEN:
+                if (bytesRead > 0)
+                {
+                    alarmEnabled = FALSE;
+                    alarmCount = 0;
+                    return 0;
+                }
+                break;
 
+            case ALARM_CLOSE:
+                if (bytesRead > 0)
+                {
+                    alarmEnabled = FALSE;
+                    alarmCount = 0;
+                    return 0;
+                }
+                break;
 
-                default:
-                    //printf("NOT A DEFINED STATE\n");
-                    return 1;
+            default:
+                return 1;
             }
         }
         // in the end, the alarm_handle() disabled alarmEnabled again, meaning 3 seconds have passed
         // try again for 3 more times
     }
-    if (alarmCount == 4)
-    {
-        printf("[ALARM] ALL 4 TRIES FAILED!");
-        return 1;
-    }
-    else
-        return 0;
+    if (alarmCount == 4) return 1;
+    return 0;
 }
 
 int stateMachine(unsigned char byte, enum state s, enum machine_state ms, LinkLayerRole role, int type)
@@ -320,112 +288,39 @@ int stateMachine(unsigned char byte, enum state s, enum machine_state ms, LinkLa
 
     while (s != STOP)
     {
-        // printf("[VAR] SM RECIEVED VAR = 0x%02X\n", byte);
         switch (s)
         {
         case START:
-            // printf("SM START\n");
             if (byte == FLAG)
             {
                 s = FLAG_RCV;
             }
             break;
         case FLAG_RCV:
-            // printf("SM FLAG_RCV\n");
             a = byte;
-            // se transmissor: quero ler COMANDOS (0x01) ou RESPOSTAS (0x03) do RECIEVER, se for Rx quero ler COMANDOS (0x03) ou RESPOSTAS (0x01) do TRANSMISSOR
-            if ((byte == 0x01 && role == LlTx && type == A_COMMAND) ||
-                (byte == 0x03 && role == LlRx && type == A_COMMAND) ||
-                (byte == 0x03 && role == LlTx && type == A_REPLY) ||
-                (byte == 0x01 && role == LlRx && type == A_REPLY))
+            // As a Transmitter I want to read Recevier's Commands or Responses
+            // As a Receiver I want to read Transmitters Commands or Responses
+            //se for Rx quero ler COMANDOS (0x03) ou RESPOSTAS (0x01) do TRANSMISSOR
+            if ((byte == A_RX_C && role == LlTx && type == A_COMMAND) ||
+                (byte == A_TX_C && role == LlRx && type == A_COMMAND) ||
+                (byte == A_RX_R && role == LlTx && type == A_REPLY) ||
+                (byte == A_TX_R && role == LlRx && type == A_REPLY))
+            {
+                s = A_RCV;
+            }
+            else if (byte != FLAG)
+            {
+                s = START;
+            }
+            break;
+        case A_RCV:
+            c = byte;
+            switch (ms)
+            {
+            case OPEN:
+                if ((byte == C_UA && role == LlTx) || (byte == C_SET && role == LlRx))
                 {
-                    s = A_RCV;
-                }
-                else if (byte != FLAG)
-                {
-                    s = START;
-                }
-                break;
-            case A_RCV:
-                //printf("SM A_RCV\n");
-                c = byte;
-                switch(ms)
-                {
-                    case OPEN:
-                        if ((byte == 0x07 && role == LlTx) || (byte == 0x03 && role == LlRx))
-                        {
-                            s = C_RCV;
-                        }
-                        else if (byte == FLAG)
-                        {
-                            s = FLAG_RCV;
-                        }
-                        else
-                        {
-                            s = START;
-                        }
-                        break;
-                    case WRITE: //i.e: write treats packets sent by LLREAD()
-                        if ((byte == 0xAA) || (byte == 0xAB) || (byte == 0x54) || (byte == 0x55))
-                        {
-                            s = C_RCV;
-                            rx_answer = byte;
-                        }
-                        else
-                        {
-                            s = START; // houve erro, voltar ao inicio
-                        }
-                        break;
-                    case READ: // i.e: read treats packets sent by LLWRITE()
-                        if ((byte == 0x00) || (byte == 0x80))
-                        {
-                            s = C_RCV;
-                        }
-                        else
-                        {
-                            s = START;
-                        }
-                        break;
-                    case CLOSE:
-                        printf("Entrei no CLOSE da StateMachine\n");
-                        // ou seja: DISC aceita, mas só aceitar UA se for o Rx a ler (ou seja, o Tx mandou)
-
-                        if (byte == C_DISC) {
-                            if (role == LlTx) {
-                                printf("LlTx Recebeu DISC\n");
-                                s = STOP;
-                                return 0;
-                            } else {
-                                printf("LlRx Recebeu DISC\n");
-                                return 0;
-                            }
-                        } else if (byte == C_UA) {
-                            printf("Received UA");
-                            return 0;
-                        }
-                        break;
-
-                        /*
-                        if ((byte == C_DISC && role == LlTx) || (byte == C_DISC && role == LlRx))
-                        {
-                            printf("Recebeu DISC\n");
-                            return 0;
-                        } else if (byte == C_UA && role == LlTx) {
-
-                        }
-                        break;
-                        */
-
-                    default:
-                        //printf("NOT A DEFINED STATE\n");
-                        return 1;
-                }
-                break;
-            case C_RCV:
-                //printf("SM C_RCV\n");
-                if (byte == (a ^ c))
-                {
-                    s = BCC_OK;
+                    s = C_RCV;
                 }
                 else if (byte == FLAG)
                 {
@@ -436,26 +331,80 @@ int stateMachine(unsigned char byte, enum state s, enum machine_state ms, LinkLa
                     s = START;
                 }
                 break;
-            case BCC_OK:
-                //printf("SM BCC\n");
-                switch(ms)
+            case WRITE: // i.e: write treats packets sent by LLREAD()
+                if ((byte == C_RR0) || (byte == C_RR1) || (byte == C_REJ0) || (byte == C_REJ1))
                 {
-                    // open,write have the same cases
-                    case OPEN:
-                    case WRITE:
-                    case CLOSE:
-                        if (byte == FLAG)
-                        {
-                            s = STOP;
-                        }
-                        else
-                        {
-                            s = START;
-                        }
-                        break;
-                    case READ:
-                        // CHECK NS (TX_FN), if NS is the expected (new frame, no dupe) then GO, else RR(NS)
+                    s = C_RCV;
+                    rx_answer = byte;
+                }
+                else
+                {
+                    s = START;  //There was an error, must go back to the initial state
+                }
+                break;
+            case READ: // i.e: read treats packets sent by LLWRITE()
+                if ((byte == C_FRAME0) || (byte == C_FRAME1))
+                {
+                    s = C_RCV;
+                }
+                else
+                {
+                    s = START;
+                }
+                break;
+            case CLOSE:
+                // ou seja: DISC aceita, mas só aceitar UA se for o Rx a ler (ou seja, o Tx mandou)
+                if (byte == C_DISC)
+                {
+                    if (role == LlTx)
+                    {
+                        s = STOP;
+                        return 0;
+                    }
 
+                }
+                else if (byte == C_UA) {
+                    if (role == LlRx) {
+                        s = STOP;
+                        return 0;
+                    }
+                }
+
+            default:
+                return 1;
+            }
+            break;
+        case C_RCV:
+            if (byte == (a ^ c))
+            {
+                s = BCC_OK;
+            }
+            else if (byte == FLAG)
+            {
+                s = FLAG_RCV;
+            }
+            else
+            {
+                s = START;
+            }
+            break;
+        case BCC_OK:
+            switch (ms)
+            {
+            case OPEN:
+            case WRITE:
+            case CLOSE:
+                if (byte == FLAG)
+                {
+                    s = STOP;
+                }
+                else
+                {
+                    s = START;
+                }
+                break;
+            case READ:
+                // CHECK NS (TX_FN): If NS is the expected (new frame, no duplicate) then GO, else RR(NS)
                 // se for o expectavel (tx_fn tem de ser igual ao da trama atual)
                 if (tx_fn == (c != 0))
                 {
@@ -481,27 +430,21 @@ int stateMachine(unsigned char byte, enum state s, enum machine_state ms, LinkLa
                 }
                 else
                 {
-                    // ignore or send RR(Ns)
-                    return 1;
-                    // voltar ao inicio ignora a trama (o emissor toma iniciativa de mandar de novo)
+                    return 1;   // ignore or send RR(Ns)
                 }
                 break;
             default:
-                // printf("NOT A DEFINED STATE\n");
                 return 1;
             }
             break;
         default:
-            // printf("NOT A DEFINED STATE\n");
             return 1;
         }
         if (s != STOP)
         {
             readByteSerialPort(&byte);
-            // printf("var = 0x%02X\n", byte);
         }
     }
-    printf("[SM] STATE: STOP\n");
     return 0;
 }
 
@@ -520,7 +463,6 @@ int llopen(LinkLayer connectionParameters)
         perror("openSerialPort");
         exit(-1);
     }
-    // printf("Serial port %s opened\n", serialPort);
 
     switch (connectionParameters.role)
     {
@@ -532,28 +474,25 @@ int llopen(LinkLayer connectionParameters)
             perror("sigaction");
             exit(1);
         }
-        // printf("Alarm configured\n");
 
-        // write set
+        // Write Set
         if (txAlarm(&byte, ALARM_OPEN))
         {
             return 1;
         };
 
-        // read ua
+        // Read UA
         stateMachine(byte, START, OPEN, x_role, A_REPLY);
         break;
     case LlRx:
-        // read set
+        // Read Set
         readByteSerialPort(&byte);
-        // printf("var = 0x%02X\n", byte);
         stateMachine(byte, START, OPEN, x_role, A_COMMAND);
 
-        // write ua
+        // Write Ua
         writeUa(A_REPLY);
         break;
     default:
-        // printf("Invalid role\n");
         return 1;
     }
 
@@ -566,9 +505,6 @@ int llopen(LinkLayer connectionParameters)
 ////////////////////////////////////////////////
 int llwrite(const unsigned char *buf, int bufSize)
 {
-
-    // printf("[SM] Entered llwrite()\n");
-
     // tamanho do vetor 2*max_payload_size + 6
     // max_payload_size é 1000
     // caso todos os caracteres sejam flag,sera necessario fazer o byte stuffing de todos eles, o que faria com que o tamanho duplicasse
@@ -605,12 +541,10 @@ int llwrite(const unsigned char *buf, int bufSize)
     {
         currentByte = buf[i];
         bcc2 ^= currentByte; // calcular BCC
-        // printf("[VAR] STUFFED CURRENT VAR = 0x%02X\n", currentByte);
         byte_stuffing(&currentByte, frame, &frame_size);
     }
 
     // adiciona o BCC2 e faz o stuffing do BCC2
-    // printf("[VAR] BCC2 BEFORE STUFFING = 0x%02X\n", bcc2);
     byte_stuffing(&bcc2, frame, &frame_size);
     frame[frame_size++] = 0x7E;
     // O VETOR ESTA PRONTO
@@ -628,22 +562,19 @@ int llwrite(const unsigned char *buf, int bufSize)
         perror("sigaction");
         exit(1);
     }
-    // printf("Alarm configured\n");
 
     // write I and expect ACK
     if (txAlarm(&byte, ALARM_WRITE))
         return 1;
 
-    printf("[TX] Sending frame: %d bytes\n", frame_size);
-    printf("[SM] LLWRITE() WAS SUCCESSFUL!\n");
     return 0;
 }
 
+// Used to escape the flags inside a frame
+// Receives a byte, a vector and it's current size
+// Appends the stuffed byte to the vector and updated its size
 void byte_stuffing(unsigned char *currentbyte, unsigned char *vector, unsigned int *size)
 {
-
-    // printf("[SM] Entered byte_stuffing()\n");
-
     if (*currentbyte == FLAG)
     {
         vector[*size] = 0x7D; // ESC
@@ -661,14 +592,50 @@ void byte_stuffing(unsigned char *currentbyte, unsigned char *vector, unsigned i
         vector[*size] = *currentbyte;
         (*size)++;
     }
-
-    // printf("[SM] Left byte_stuffing()\n");
 }
 
 ////////////////////////////////////////////////
 // LLREAD
 ////////////////////////////////////////////////
+int llread(unsigned char *packet)
+{
+    unsigned char byte;
+    readByteSerialPort(&byte);
 
+    if (stateMachine(byte, START, READ, x_role, 0))
+    {
+        writeREJ();
+        return -1;
+    }
+
+    int flag = 0;
+    unsigned int index = 0, size = 0; // destuffed payload size will be stored in 'size'
+
+    while (flag != 1)
+    {
+        if (size >= (MAX_PAYLOAD_SIZE * 2 + 6))
+            return 1;
+        flag = byte_destuffing(rx_packet, &index, &size);
+    }
+
+    if (checkBCC2(rx_packet, size)) // bcc2 not correct
+    {
+        writeREJ();
+        return -1;
+    }
+    else
+    {
+        rx_fn = (rx_fn == 0) ? 1 : 0;
+        writeRR();
+        int copy_size = (size - 1 > MAX_PAYLOAD_SIZE) ? MAX_PAYLOAD_SIZE : size - 1;
+        memcpy(packet, rx_packet, copy_size);
+        return copy_size;
+    }
+}
+
+// Used to destuff the frame on the receiver side
+// Receives a packet, it's size, and the current size of the destuffed packet
+// Destuffs the byte at the given index of the packet given. Retuns 0 if there wasn't any errors, returns -1 otherwise
 int byte_destuffing(unsigned char *rx_packet, unsigned int *index, unsigned int *size)
 {
     if (rx_packet[*index] == 0x7D)
@@ -688,10 +655,7 @@ int byte_destuffing(unsigned char *rx_packet, unsigned int *index, unsigned int 
     }
     else
     {
-        if (rx_packet[*index] == FLAG)
-        {
-            return 1;
-        }
+        if (rx_packet[*index] == FLAG) return 1;
         rx_packet[*size] = rx_packet[*index];
         (*size)++;
         (*index)++;
@@ -707,153 +671,64 @@ int checkBCC2(unsigned char *rx_packet, int size)
     for (int i = 0; i < size; i++)
     {
         unsigned char byte = rx_packet[i];
-        // printf("[VAR] DESTUFFED CURRENT VAR = 0x%02X\n", byte);
         bcc2_acc ^= byte;
     }
 
     // i.e: tem de ser 0 porque o último byte foi o BCC2, pelo que se estiver certo (sum DATA ^ BCC2 = 0)
     // um pacote XOR com ele próprio dá 0...
-    if (bcc2_acc == 0)
-    {
-        printf("BCC2 check\n");
-        return 0;
-    }
-    else
-    {
-        printf("BCC2 fail\n");
-        return 1;
-    }
+    if (bcc2_acc == 0) return 0;
+    return 1;
 }
 
-int llread(unsigned char *packet)
-{
-    // wait for something
-    unsigned char byte;
-    readByteSerialPort(&byte);
-
-    if (stateMachine(byte, START, READ, x_role, 0))
-    {
-        writeREJ();
-        printf("[SM] writeREJ - BCC1 Failed\n");
-        return -1;
-    }
-    else
-        printf("[SM] BCC1 OK\n");
-
-    // received something
-    int flag = 0;
-    unsigned int index = 0, size = 0; // destuffed payload size will be stored in 'size'
-
-    // printf("RX_PACKET_LEN: %d\n", rx_packet_len);
-    while (flag != 1)
-    {
-        if (size >= (MAX_PAYLOAD_SIZE * 2 + 6))
-            return 1;
-        flag = byte_destuffing(rx_packet, &index, &size);
-    }
-
-    printf("[RX] Received frame (%d bytes after destuffing)\n", size);
-
-    if (checkBCC2(rx_packet,size)) // bcc2 not correct
-    {
-        printf("[LLRX] BCC2 error -> sending REJ\n");
-        writeREJ();
-        printf("[SM] BCC2 LLREAD() SENT REJ!\n");
-        return -1;
-    }
-    else
-    {
-        printf("[LLRX] BCC2 OK -> sending RR and accepting frame\n");
-
-        // alterna número de sequência (o último frame recebido com sucesso)
-        rx_fn = (rx_fn == 0) ? 1 : 0;
-
-        writeRR();
-
-        int copy_size = (size - 1 > MAX_PAYLOAD_SIZE) ? MAX_PAYLOAD_SIZE : size - 1;
-        memcpy(packet, rx_packet, copy_size);
-        printf("[SM] LLREAD() WAS SUCCESSFUL!\n");
-        return copy_size;
-    }
-}
 
 ////////////////////////////////////////////////
 // LLCLOSE
 ////////////////////////////////////////////////
 int llclose()
-{   
+{
     unsigned char byte;
     switch (x_role)
     {
-        case LlTx:
+    case LlTx:
 
-            struct sigaction act = {0};
-            act.sa_handler = &alarmHandler;
-            if (sigaction(SIGALRM, &act, NULL) == -1)
-            {
-                perror("sigaction");
-                exit(1);
-            }
-            //printf("Alarm configured\n");
+        struct sigaction act = {0};
+        act.sa_handler = &alarmHandler;
+        if (sigaction(SIGALRM, &act, NULL) == -1)
+        {
+            perror("sigaction");
+            exit(1);
+        }
 
-            // write DISC (0x03)
-            if (txAlarm(&byte,ALARM_CLOSE))
-            {
-                return 1;
-            };
-
-            // read disc
-            printf("Transmissor vai tentar ler o DISC do recetor (aka DISC2)\n");
-            readByteSerialPort(&byte);
-            printf("[TX] Vou chamar a StateMachine com o byte 0x%02X\n", byte);
-            stateMachine(byte,A_RCV,CLOSE,x_role,A_REPLY);
-
-            printf("O transmissor recebeu o DISC(2)\n");
-
-            //writeUa
-            writeUa(A_REPLY);
-
-
-            break;
-
-            /*
-            // write DISC (0x03)
-            writeDisc(A_COMMAND);
-
-        // read DISC + confirm
-        // acabar SM para CLOSE
-        readByteSerialPort(&byte);
-        stateMachine(byte, START, CLOSE, x_role, A_COMMAND);
-
-            // write ua (reply to Rx, 0x01) 
-            writeUa(A_REPLY);
-            break;
-
-            */
-        case LlRx:
-            // read DISC + confirm
-            readByteSerialPort(&byte);
-            printf("[RX] Vou chamar a StateMachine com o byte 0x%02X\n", byte);
-
-            stateMachine(byte,A_RCV,CLOSE,x_role,A_COMMAND);
-
-            printf("O recetor recebeu o DISC(1)\n");
-
-            // write DISC (0x01)
-            writeDisc(A_COMMAND);
-            printf("Recetor acaba de mandar o seu Disc (DISC2)\n");
-
-            // read UA + confirm
-            readByteSerialPort(&byte);
-            printf("[RX] Vou chamar a StateMachine com o byte 0x%02X\n", byte);
-            stateMachine(byte,A_RCV,CLOSE,x_role,A_REPLY);
-
-            printf("O recetor recebeu UA\n");
-
-            break;
-        default:
-            //printf("Invalid role\n");
+        // Write DISC (0x03)
+        if (txAlarm(&byte, ALARM_CLOSE))
+        {
             return 1;
+        };
+
+        // Read DISC
+        readByteSerialPort(&byte);
+        stateMachine(byte, A_RCV, CLOSE, x_role, A_REPLY);
+
+        // Write UA
+        writeUa(A_REPLY);
+
+        break;
+
+    case LlRx:
+        // Confirm Read DISC
+        readByteSerialPort(&byte);
+        stateMachine(byte, A_RCV, CLOSE, x_role, A_COMMAND);
+
+        // Write DISC (0x01)
+        writeDisc(A_COMMAND);
+
+        // Confirm Read UA
+        readByteSerialPort(&byte);
+        stateMachine(byte, A_RCV, CLOSE, x_role, A_REPLY);
+
+        break;
+    default:
+        return 1;
     }
 
     if (closeSerialPort() < 0)
@@ -862,7 +737,6 @@ int llclose()
         exit(-1);
     }
 
-    //printf("Serial port %s closed\n", serialPort);
     printf("[SM] LLCLOSE() WAS SUCCESSFUL!\n");
 
     return 0;
