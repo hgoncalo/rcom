@@ -35,27 +35,9 @@
 // Atenção: .X_! onde . é T/R (transmissor ou recetor)
 // E ! é C/R (Command ou Reply)
 
-enum state
-{
-    START,
-    FLAG_RCV,
-    A_RCV,
-    C_RCV,
-    BCC_OK,
-    STOP
-};
-enum alarm_state
-{
-    ALARM_OPEN,
-    ALARM_WRITE
-};
-enum machine_state
-{
-    OPEN,
-    WRITE,
-    READ,
-    CLOSE
-};
+enum state {START, FLAG_RCV, A_RCV, C_RCV, BCC_OK, STOP}; 
+enum alarm_state {ALARM_OPEN, ALARM_WRITE, ALARM_CLOSE};
+enum machine_state {OPEN, WRITE, READ, CLOSE};
 
 void writeSet();
 void writeUa();
@@ -225,25 +207,35 @@ void alarmHandler(int signal)
 
 int txAlarm(unsigned char *byte, enum alarm_state as)
 {
-    printf("[SM] Entered txAlarm() with state: %d\n", as);
+
 
     while (alarmCount < 4)
     {
-        printf("[TX] Alarm Count: %d\n", alarmCount);
-
         if (alarmEnabled == FALSE)
         {
             switch (as)
             {
-            case ALARM_OPEN:
-                writeSet();
-                break;
-            case ALARM_WRITE:
-                writeI();
-                break;
-            default:
-                // printf("NOT A DEFINED STATE\n");
-                return 1;
+                case ALARM_OPEN:
+
+                    printf("[SM] Alarm Open Case\n");
+
+                    writeSet();
+                    break;
+                case ALARM_WRITE:
+                    printf("[SM] Alarm Write Case\n");
+
+                    writeI();
+                    break;
+
+                case ALARM_CLOSE:
+                    printf("[SM] Alarm Close Case\n");
+                    
+                    writeDisc(A_COMMAND);
+                    break;
+                    
+                default:
+                    //printf("NOT A DEFINED STATE\n");
+                    return 1;
             }
             alarm(3); // Set alarm to be triggered in 3s
             alarmEnabled = TRUE;
@@ -290,6 +282,19 @@ int txAlarm(unsigned char *byte, enum alarm_state as)
                         return 0;
                     }
                     break;
+
+                case ALARM_CLOSE:
+                    printf("[SM] Entered ALARM_CLOSE Case\n");
+                    printf("[SM] Alarm Count = %d\n", alarmCount);
+                    if (bytesRead > 0)
+                    {
+                        alarmEnabled = FALSE;
+                        alarmCount = 0;
+                        return 0;
+                    }
+                    break;
+
+
                 default:
                     //printf("NOT A DEFINED STATE\n");
                     return 1;
@@ -333,23 +338,94 @@ int stateMachine(unsigned char byte, enum state s, enum machine_state ms, LinkLa
                 (byte == 0x03 && role == LlRx && type == A_COMMAND) ||
                 (byte == 0x03 && role == LlTx && type == A_REPLY) ||
                 (byte == 0x01 && role == LlRx && type == A_REPLY))
-            {
-                s = A_RCV;
-            }
-            else if (byte != FLAG)
-            {
-                s = START;
-            }
-            break;
-        case A_RCV:
-            // printf("SM A_RCV\n");
-            c = byte;
-            switch (ms)
-            {
-            case OPEN:
-                if ((byte == 0x07 && role == LlTx) || (byte == 0x03 && role == LlRx))
                 {
-                    s = C_RCV;
+                    s = A_RCV;
+                }
+                else if (byte != FLAG)
+                {
+                    s = START;
+                }
+                break;
+            case A_RCV:
+                //printf("SM A_RCV\n");
+                c = byte;
+                switch(ms)
+                {
+                    case OPEN:
+                        if ((byte == 0x07 && role == LlTx) || (byte == 0x03 && role == LlRx))
+                        {
+                            s = C_RCV;
+                        }
+                        else if (byte == FLAG)
+                        {
+                            s = FLAG_RCV;
+                        }
+                        else
+                        {
+                            s = START;
+                        }
+                        break;
+                    case WRITE: //i.e: write treats packets sent by LLREAD()
+                        if ((byte == 0xAA) || (byte == 0xAB) || (byte == 0x54) || (byte == 0x55))
+                        {
+                            s = C_RCV;
+                            rx_answer = byte;
+                        }
+                        else
+                        {
+                            s = START; // houve erro, voltar ao inicio
+                        }
+                        break;
+                    case READ: // i.e: read treats packets sent by LLWRITE()
+                        if ((byte == 0x00) || (byte == 0x80))
+                        {
+                            s = C_RCV;
+                        }
+                        else
+                        {
+                            s = START;
+                        }
+                        break;
+                    case CLOSE:
+                        printf("Entrei no CLOSE da StateMachine\n");
+                        // ou seja: DISC aceita, mas só aceitar UA se for o Rx a ler (ou seja, o Tx mandou)
+
+                        if (byte == C_DISC) {
+                            if (role == LlTx) {
+                                printf("LlTx Recebeu DISC\n");
+                                s = STOP;
+                                return 0;
+                            } else {
+                                printf("LlRx Recebeu DISC\n");
+                                return 0;
+                            }
+                        } else if (byte == C_UA) {
+                            printf("Received UA");
+                            return 0;
+                        }
+                        break;
+
+                        /*
+                        if ((byte == C_DISC && role == LlTx) || (byte == C_DISC && role == LlRx))
+                        {
+                            printf("Recebeu DISC\n");
+                            return 0;
+                        } else if (byte == C_UA && role == LlTx) {
+
+                        }
+                        break;
+                        */
+
+                    default:
+                        //printf("NOT A DEFINED STATE\n");
+                        return 1;
+                }
+                break;
+            case C_RCV:
+                //printf("SM C_RCV\n");
+                if (byte == (a ^ c))
+                {
+                    s = BCC_OK;
                 }
                 else if (byte == FLAG)
                 {
@@ -360,77 +436,25 @@ int stateMachine(unsigned char byte, enum state s, enum machine_state ms, LinkLa
                     s = START;
                 }
                 break;
-            case WRITE: // i.e: write treats packets sent by LLREAD()
-                if ((byte == 0xAA) || (byte == 0xAB) || (byte == 0x54) || (byte == 0x55))
+            case BCC_OK:
+                //printf("SM BCC\n");
+                switch(ms)
                 {
-                    s = C_RCV;
-                    rx_answer = byte;
-                }
-                else
-                {
-                    s = START; // houve erro, voltar ao inicio
-                }
-                break;
-            case READ: // i.e: read treats packets sent by LLWRITE()
-                if ((byte == 0x00) || (byte == 0x80))
-                {
-                    s = C_RCV;
-                }
-                else
-                {
-                    s = START;
-                }
-                break;
-            case CLOSE:
-                // ou seja: DISC aceita, mas só aceitar UA se for o Rx a ler (ou seja, o Tx mandou)
-                if ((byte == C_DISC) || (byte == C_UA && role == LlRx))
-                {
-                    s = C_RCV;
-                }
-                else
-                {
-                    s = START;
-                }
-                break;
-            default:
-                // printf("NOT A DEFINED STATE\n");
-                return 1;
-            }
-            break;
-        case C_RCV:
-            // printf("SM C_RCV\n");
-            if (byte == (a ^ c))
-            {
-                s = BCC_OK;
-            }
-            else if (byte == FLAG)
-            {
-                s = FLAG_RCV;
-            }
-            else
-            {
-                s = START;
-            }
-            break;
-        case BCC_OK:
-            // printf("SM BCC\n");
-            switch (ms)
-            {
-            // open,write have the same cases
-            case OPEN:
-            case WRITE:
-            case CLOSE:
-                if (byte == FLAG)
-                {
-                    s = STOP;
-                }
-                else
-                {
-                    s = START;
-                }
-                break;
-            case READ:
-                // CHECK NS (TX_FN), if NS is the expected (new frame, no dupe) then GO, else RR(NS)
+                    // open,write have the same cases
+                    case OPEN:
+                    case WRITE:
+                    case CLOSE:
+                        if (byte == FLAG)
+                        {
+                            s = STOP;
+                        }
+                        else
+                        {
+                            s = START;
+                        }
+                        break;
+                    case READ:
+                        // CHECK NS (TX_FN), if NS is the expected (new frame, no dupe) then GO, else RR(NS)
 
                 // se for o expectavel (tx_fn tem de ser igual ao da trama atual)
                 if (tx_fn == (c != 0))
@@ -757,37 +781,79 @@ int llread(unsigned char *packet)
 // LLCLOSE
 ////////////////////////////////////////////////
 int llclose()
-{
+{   
     unsigned char byte;
     switch (x_role)
     {
-    case LlTx:
-        // write DISC (0x03)
-        writeDisc(A_COMMAND);
+        case LlTx:
+
+            struct sigaction act = {0};
+            act.sa_handler = &alarmHandler;
+            if (sigaction(SIGALRM, &act, NULL) == -1)
+            {
+                perror("sigaction");
+                exit(1);
+            }
+            //printf("Alarm configured\n");
+
+            // write DISC (0x03)
+            if (txAlarm(&byte,ALARM_CLOSE))
+            {
+                return 1;
+            };
+
+            // read disc
+            printf("Transmissor vai tentar ler o DISC do recetor (aka DISC2)\n");
+            readByteSerialPort(&byte);
+            printf("[TX] Vou chamar a StateMachine com o byte 0x%02X\n", byte);
+            stateMachine(byte,A_RCV,CLOSE,x_role,A_REPLY);
+
+            printf("O transmissor recebeu o DISC(2)\n");
+
+            //writeUa
+            writeUa(A_REPLY);
+
+
+            break;
+
+            /*
+            // write DISC (0x03)
+            writeDisc(A_COMMAND);
 
         // read DISC + confirm
         // acabar SM para CLOSE
         readByteSerialPort(&byte);
         stateMachine(byte, START, CLOSE, x_role, A_COMMAND);
 
-        // write ua (reply to Rx, 0x01)
-        writeUa(A_REPLY);
-        break;
-    case LlRx:
-        // read DISC + confirm
-        readByteSerialPort(&byte);
-        stateMachine(byte, START, CLOSE, x_role, A_COMMAND);
+            // write ua (reply to Rx, 0x01) 
+            writeUa(A_REPLY);
+            break;
 
-        // write DISC (0x01)
-        writeDisc(A_COMMAND);
+            */
+        case LlRx:
+            // read DISC + confirm
+            readByteSerialPort(&byte);
+            printf("[RX] Vou chamar a StateMachine com o byte 0x%02X\n", byte);
 
-        // read UA + confirm
-        readByteSerialPort(&byte);
-        stateMachine(byte, START, CLOSE, x_role, A_REPLY);
-        break;
-    default:
-        // printf("Invalid role\n");
-        return 1;
+            stateMachine(byte,A_RCV,CLOSE,x_role,A_COMMAND);
+
+            printf("O recetor recebeu o DISC(1)\n");
+
+            // write DISC (0x01)
+            writeDisc(A_COMMAND);
+            printf("Recetor acaba de mandar o seu Disc (DISC2)\n");
+
+            // read UA + confirm
+            readByteSerialPort(&byte);
+            printf("[RX] Vou chamar a StateMachine com o byte 0x%02X\n", byte);
+            stateMachine(byte,A_RCV,CLOSE,x_role,A_REPLY);
+
+            printf("O recetor recebeu UA\n");
+
+            break;
+        default:
+            //printf("Invalid role\n");
+            return 1;
     }
 
     if (closeSerialPort() < 0)
