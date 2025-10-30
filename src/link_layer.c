@@ -84,17 +84,13 @@ int getAType(LinkLayerRole role, int type);
 int validResponse(unsigned char byte)
 {
     // Expect COMMAND (A_RX_C) from receiver for RR/REJ during WRITE
-    if (stateMachine(byte, START, WRITE, x_role, A_COMMAND))
-        return 1;
+    if (stateMachine(byte,START,WRITE,x_role,A_COMMAND)) return -1;
     else
     {
         // stateMachine got an valid answer
-        if (rx_answer == C_REJ0 || rx_answer == C_REJ1)
-            return 1;
-        else if (rx_answer == C_RR0 || rx_answer == C_RR1)
-            return 0;
-        else
-            return 1;
+        if (rx_answer == C_REJ0 || rx_answer == C_REJ1) return 1; // rej
+        if (rx_answer == C_RR0 || rx_answer == C_RR1) return 0; // ack
+        else return -1;
     }
 }
 
@@ -223,12 +219,13 @@ void alarmHandler(int signal)
 {
     alarmEnabled = FALSE;
     alarmCount++;
-    // printf("Alarm #%d received\n", alarmCount);
+    //printf("Alarm #%d received\n", alarmCount);
+    printf("[TX] Timeout -> retransmitting last frame, alarmCount: %d\n", alarmCount);
 }
 
 int txAlarm(unsigned char *byte, enum alarm_state as)
 {
-    printf("[SM] Entered txAlarm()\n");
+    printf("[SM] Entered txAlarm() with state: %d\n", as);
 
     while (alarmCount < 4)
     {
@@ -256,39 +253,46 @@ int txAlarm(unsigned char *byte, enum alarm_state as)
             int bytesRead = readByteSerialPort(byte);
             switch (as)
             {
-            case ALARM_WRITE:
-                printf("[SM] Entered ALARM_WRITE Case\n");
-
-                if (bytesRead > 0 && (validResponse(*byte) == 0))
-                {
-                    // printf("EXITED ALARM");
-                    alarmEnabled = FALSE;
-                    alarmCount = 0;
-
-                    printf("[SM] txAlarm exited with 0\n");
-                    return 0;
-                }
-                else
-                {
-                    // printf("INVALID RESPONSE\n");
-                    pause(); // espera pelo handler
-                }
-                break;
-            case ALARM_OPEN:
-                // printf("[SM] Entered ALARM_OPEN Case\n");
-                if (bytesRead > 0)
-                {
-                    // printf("var = 0x%02X\n", *byte);
-                    // printf("EXITED ALARM");
-                    alarmEnabled = FALSE;
-                    alarmCount = 0;
-                    // printf("[SM] txAlarm exited with 0\n");
-                    return 0;
-                }
-                break;
-            default:
-                // printf("NOT A DEFINED STATE\n");
-                return 1;
+                case ALARM_WRITE:
+                    if (bytesRead > 0)
+                    {
+                        int vr = validResponse(*byte);
+                        //printf("[SM] Entered ALARM_WRITE Case\n");
+                        if (vr == 0)
+                        {
+                            printf("[TX] Received RR -> continuing\n");
+                            alarmEnabled = FALSE;
+                            alarmCount = 0;
+                            return 0;
+                        }
+                        else if (vr == 1)
+                        {
+                            printf("[TX] Received REJ -> retransmitting\n");
+                            alarmEnabled = FALSE;
+                            // don't reset alarmCount, as it's a new try
+                        }
+                        else
+                        {
+                            //printf("INVALID RESPONSE\n");
+                            pause(); // espera pelo handler
+                        }
+                    }
+                    break;
+                case ALARM_OPEN:
+                    //printf("[SM] Entered ALARM_OPEN Case\n");
+                    if (bytesRead > 0)
+                    {
+                        //printf("var = 0x%02X\n", *byte);
+                        //printf("EXITED ALARM");
+                        alarmEnabled = FALSE;
+                        alarmCount = 0;
+                        //printf("[SM] txAlarm exited with 0\n");
+                        return 0;
+                    }
+                    break;
+                default:
+                    //printf("NOT A DEFINED STATE\n");
+                    return 1;
             }
         }
         // in the end, the alarm_handle() disabled alarmEnabled again, meaning 3 seconds have passed
@@ -296,7 +300,7 @@ int txAlarm(unsigned char *byte, enum alarm_state as)
     }
     if (alarmCount == 4)
     {
-        printf("ALL 4 TRIES FAILED! \n");
+        printf("[ALARM] ALL 4 TRIES FAILED!");
         return 1;
     }
     else
@@ -473,7 +477,7 @@ int stateMachine(unsigned char byte, enum state s, enum machine_state ms, LinkLa
             // printf("var = 0x%02X\n", byte);
         }
     }
-    // printf("STATE: STOP\n");
+    printf("[SM] STATE: STOP\n");
     return 0;
 }
 
@@ -529,7 +533,7 @@ int llopen(LinkLayer connectionParameters)
         return 1;
     }
 
-    // printf("[SM] LLOPEN() WAS SUCCESSFUL!\n");
+    printf("[SM] LLOPEN() WAS SUCCESSFUL!\n");
     return 0;
 }
 
@@ -606,7 +610,8 @@ int llwrite(const unsigned char *buf, int bufSize)
     if (txAlarm(&byte, ALARM_WRITE))
         return 1;
 
-    // printf("[SM] LLWRITE() WAS SUCCESSFUL!\n");
+    printf("[TX] Sending frame: %d bytes\n", frame_size);
+    printf("[SM] LLWRITE() WAS SUCCESSFUL!\n");
     return 0;
 }
 
@@ -723,10 +728,13 @@ int llread(unsigned char *packet)
         flag = byte_destuffing(rx_packet, &index, &size);
     }
 
-    if (checkBCC2(rx_packet, size))
+    printf("[RX] Received frame (%d bytes after destuffing)\n", size);
+
+    if (checkBCC2(rx_packet,size)) // bcc2 not correct
     {
         printf("[LLRX] BCC2 error -> sending REJ\n");
         writeREJ();
+        printf("[SM] BCC2 LLREAD() SENT REJ!\n");
         return -1;
     }
     else
@@ -740,6 +748,7 @@ int llread(unsigned char *packet)
 
         int copy_size = (size - 1 > MAX_PAYLOAD_SIZE) ? MAX_PAYLOAD_SIZE : size - 1;
         memcpy(packet, rx_packet, copy_size);
+        printf("[SM] LLREAD() WAS SUCCESSFUL!\n");
         return copy_size;
     }
 }
@@ -787,8 +796,8 @@ int llclose()
         exit(-1);
     }
 
-    // printf("Serial port %s closed\n", serialPort);
-    // printf("[SM] LLCLOSE() WAS SUCCESSFUL!\n");
+    //printf("Serial port %s closed\n", serialPort);
+    printf("[SM] LLCLOSE() WAS SUCCESSFUL!\n");
 
     return 0;
 }

@@ -67,14 +67,13 @@ void log_packet(const char *filename, unsigned char *packet, int size) {
 void appStateMachine(enum state s) {
     while(s != END)
     {
-        //printf("[ASM] CURRENT STATE = %d\n", s);
+        printf("[ASM] CURRENT STATE = %d\n", s);
         unsigned char packet[MAX_PAYLOAD_SIZE];
         unsigned char frag[MAX_PAYLOAD_SIZE];
         switch (s) {
             case OPENFILE:
 
                 printf("[ASM] Entered state OPENFILE\n");
-
                 switch(connectionParameters.role)
                 {
                     case LlTx:
@@ -86,7 +85,14 @@ void appStateMachine(enum state s) {
                     default:
                         return;
                 }
-                if (llopen(connectionParameters) == ERROR) return;
+
+                if (llopen(connectionParameters))
+                {
+                    printf("[ASM] Failed LLOPEN()\n");
+                    s = END;
+                    break;
+                }
+
                 s = START_PACKET;
                 break;
             case START_PACKET:
@@ -97,7 +103,6 @@ void appStateMachine(enum state s) {
                 {
                     case LlTx:
                         b_size = buildCtrlPck(CTRL_START);
-
                         //printf("[TX] Built START packet, size = %d\n", b_size);
 
                         if (b_size < 0) {
@@ -114,7 +119,7 @@ void appStateMachine(enum state s) {
                         {
                             log_packet("tx_log.txt", ctrl_pck, b_size); 
                         }
-                        //printf("[TX] START packet sent\n");
+                        printf("[TX] START packet sent\n");
                         s = DATA_PACKET;
 
                         break;
@@ -172,13 +177,13 @@ void appStateMachine(enum state s) {
                                 */
                             
                                 // create file
-                                //printf("Trying to create file: '%s'\n", rx_file_name);
                                 rx_fptr = fopen(rx_file_name, "wb");
                                 if (rx_fptr == NULL)
                                 {
                                     perror("erro ao criar ficheiro");
                                     return;
                                 }
+                                printf("Created file: '%s'\n", rx_file_name);
                                 
                                 // tudo ok
                                 s = DATA_PACKET;
@@ -199,7 +204,7 @@ void appStateMachine(enum state s) {
                     case LlTx:
                         r_size = readFragFile(frag);
 
-                        //printf("[TX] Read fragment: %d bytes\n", r_size);
+                        printf("[TX] Read fragment: %d bytes\n", r_size);
 
                         if (r_size > 0)
                         {
@@ -227,7 +232,7 @@ void appStateMachine(enum state s) {
                         // ler o pacote de controlo escrito
                         p_size = llread(packet);
 
-                        //printf("[RX] llread returned %d bytes\n", p_size);
+                        printf("[RX] llread returned %d bytes\n", p_size);
 
                         if (p_size > 0)
                         {
@@ -276,16 +281,16 @@ void appStateMachine(enum state s) {
                 case LlTx:
                     close(tx_fd);
                     tx_fd = -1;
-                    break;
+                    return;
                 case LlRx:
                     fclose(rx_fptr);
-                    break;
+                    return;
                 }
             default:
                 return;
         }
     }
-    //printf("[ASM] Exiting appStateMachine with state = %d\n", s);
+    printf("[ASM] Exiting appStateMachine with state = %d\n", s);
 }
 
 void parse_cmdLine(const char *serialPort, const char *role, int baudRate,int nTries, int timeout, const char *filename) 
