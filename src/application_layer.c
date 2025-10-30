@@ -73,7 +73,7 @@ void appStateMachine(enum state s) {
         switch (s) {
             case OPENFILE:
 
-                //printf("[ASM] Entered state OPENFILE\n");
+                printf("[ASM] Entered state OPENFILE\n");
 
                 switch(connectionParameters.role)
                 {
@@ -91,7 +91,7 @@ void appStateMachine(enum state s) {
                 break;
             case START_PACKET:
 
-                //printf("[ASM] Entered state START_PACKET\n");
+                printf("[ASM] Entered state START_PACKET\n");
             
                 switch(connectionParameters.role)
                 {
@@ -192,7 +192,7 @@ void appStateMachine(enum state s) {
                 break;
             case DATA_PACKET:
 
-                //printf("[ASM] Entered state DATA_PACKET\n");
+                printf("[ASM] Entered state DATA_PACKET\n");
 
                 switch(connectionParameters.role)
                 {
@@ -206,7 +206,7 @@ void appStateMachine(enum state s) {
                             b_size = buildDataPck(frag, r_size);
                             if ((b_size < 0) || (llwrite(data_pck, b_size) < 0))
                             {
-                                //printf("[TX] llwrite DATA packet failed\n");
+                                printf("[TX] llwrite DATA packet failed\n");
                                 llclose();
                                 s = END;
                             }
@@ -257,7 +257,7 @@ void appStateMachine(enum state s) {
                 }
                 break;
             case END_PACKET:
-                //printf("[ASM] Entered state END_PACKET\n");
+                printf("[ASM] Entered state END_PACKET\n");
 
                 b_size = buildCtrlPck(CTRL_END);
                 if (llwrite(ctrl_pck, b_size) < 0)
@@ -269,7 +269,7 @@ void appStateMachine(enum state s) {
                 break;
             case END:
 
-                //printf("[ASM] Entered state END\n");
+                printf("[ASM] Entered state END\n");
 
                 switch(connectionParameters.role)
                 {
