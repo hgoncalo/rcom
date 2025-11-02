@@ -1,9 +1,0 @@
-gcc -Wall -o bin//main src//application_layer.c src//link_layer.c src//main.c src//serial_port.c
-./bin//main /dev/ttyS11 9600 rx penguin-received.gif
-Starting link-layer protocol application
-  - Serial port: /dev/ttyS11
-  - Role: rx
-  - Baudrate: 9600
-  - Number of tries: 3
-  - Timeout: 4
-  - Filename: penguin-received.gif

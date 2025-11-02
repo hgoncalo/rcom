@@ -32,9 +32,6 @@
 #define C_FRAME0 0x00
 #define C_FRAME1 0x80
 
-// Atenção: .X_! onde . é T/R (transmissor ou recetor)
-// E ! é C/R (Command ou Reply)
-
 // States of the frame transmission
 enum state
 {
@@ -63,6 +60,8 @@ enum machine_state
     CLOSE
 };
 
+int n_tries = 0, timeout = 0;
+
 void writeSet();
 void writeUa();
 void alarmHandler();
@@ -70,7 +69,6 @@ int checkBCC2();
 
 // Tx state machine
 int stateMachine(unsigned char byte, enum state s, enum machine_state ms, LinkLayerRole role, int type);
-
 unsigned char buf[BUF_SIZE] = {0};
 int alarmEnabled = FALSE;
 int alarmCount = 0;
@@ -80,8 +78,8 @@ const char *serialPort;
 LinkLayerRole x_role;
 
 // LLWRITE AUX FUNCTIONS
-int tx_fn, rx_fn;                             // sender's frame number (I(0) would be 0, varies between 0,1)
-int tx_buf_size = (MAX_PAYLOAD_SIZE * 2) + 6; // currently: max buffer size that will be sent (buf's data with stuffing + 6 flags), can be ajusted to only the necessary
+int tx_fn, rx_fn;                             
+int tx_buf_size = (MAX_PAYLOAD_SIZE * 2) + 6;
 unsigned char *tx_frame;
 unsigned char rx_answer;
 
@@ -91,12 +89,10 @@ int getAType(LinkLayerRole role, int type);
 
 int validResponse(unsigned char byte)
 {
-    // Expect COMMAND (A_RX_C) from receiver for RR/REJ during WRITE
     if (stateMachine(byte, START, WRITE, x_role, A_COMMAND))
         return -1;
     else
     {
-        // stateMachine got an valid answer
         if (rx_answer == C_REJ0 || rx_answer == C_REJ1)
             return 1;
         if (rx_answer == C_RR0 || rx_answer == C_RR1)
@@ -108,7 +104,7 @@ int validResponse(unsigned char byte)
 
 // LLREAD AUX
 unsigned char rx_packet[MAX_PAYLOAD_SIZE * 2 + 6];
-unsigned int rx_packet_len = 0; // stuffed payload length captured by state machine (includes BCC2, excludes FLAGs
+unsigned int rx_packet_len = 0; 
 
 void writeSet()
 {
@@ -176,7 +172,6 @@ void writeRR()
     buf[2] = (rx_fn == 0 ? C_RR1 : C_RR0);
     buf[3] = buf[1] ^ buf[2];
     buf[4] = FLAG;
-
     writeBytesSerialPort(buf, 5);
     sleep(1);
 }
@@ -189,7 +184,6 @@ void writeREJ()
     buf[2] = (rx_fn == 0 ? C_REJ0 : C_REJ1);
     buf[3] = buf[1] ^ buf[2];
     buf[4] = FLAG;
-
     writeBytesSerialPort(buf, 5);
     sleep(1);
 }
@@ -198,12 +192,11 @@ void alarmHandler(int signal)
 {
     alarmEnabled = FALSE;
     alarmCount++;
-    //printf("[TX] Timeout -> retransmitting last frame, alarmCount: %d\n", alarmCount);
 }
 
 int txAlarm(unsigned char *byte, enum alarm_state as)
 {
-    while (alarmCount < 4)
+    while (alarmCount < n_tries)
     {
         if (alarmEnabled == FALSE)
         {
@@ -215,15 +208,13 @@ int txAlarm(unsigned char *byte, enum alarm_state as)
             case ALARM_WRITE:
                 writeI();
                 break;
-
             case ALARM_CLOSE:
                 writeDisc(A_COMMAND);
                 break;
-
             default:
                 return 1;
             }
-            alarm(3); // Set alarm to be triggered in 3s
+            alarm(timeout); 
             alarmEnabled = TRUE;
         }
         else if (alarmEnabled == TRUE)
@@ -247,7 +238,7 @@ int txAlarm(unsigned char *byte, enum alarm_state as)
                     }
                     else
                     {
-                        pause(); // waits for the handler
+                        pause();
                     }
                 }
                 break;
@@ -259,7 +250,6 @@ int txAlarm(unsigned char *byte, enum alarm_state as)
                     return 0;
                 }
                 break;
-
             case ALARM_CLOSE:
                 if (bytesRead > 0)
                 {
@@ -268,15 +258,12 @@ int txAlarm(unsigned char *byte, enum alarm_state as)
                     return 0;
                 }
                 break;
-
             default:
                 return 1;
             }
         }
-        // in the end, the alarm_handle() disabled alarmEnabled again, meaning 3 seconds have passed
-        // try again for 3 more times
     }
-    if (alarmCount == 4) return 1;
+    if (alarmCount == n_tries) return 1;
     return 0;
 }
 
@@ -285,7 +272,6 @@ int stateMachine(unsigned char byte, enum state s, enum machine_state ms, LinkLa
     unsigned char a, c;
     unsigned char p[(MAX_PAYLOAD_SIZE * 2) + 6] = {0};
     int p_index = 0;
-
     while (s != STOP)
     {
         switch (s)
@@ -298,9 +284,6 @@ int stateMachine(unsigned char byte, enum state s, enum machine_state ms, LinkLa
             break;
         case FLAG_RCV:
             a = byte;
-            // As a Transmitter I want to read Recevier's Commands or Responses
-            // As a Receiver I want to read Transmitters Commands or Responses
-            //se for Rx quero ler COMANDOS (0x03) ou RESPOSTAS (0x01) do TRANSMISSOR
             if ((byte == A_RX_C && role == LlTx && type == A_COMMAND) ||
                 (byte == A_TX_C && role == LlRx && type == A_COMMAND) ||
                 (byte == A_RX_R && role == LlTx && type == A_REPLY) ||
@@ -331,7 +314,7 @@ int stateMachine(unsigned char byte, enum state s, enum machine_state ms, LinkLa
                     s = START;
                 }
                 break;
-            case WRITE: // i.e: write treats packets sent by LLREAD()
+            case WRITE:
                 if ((byte == C_RR0) || (byte == C_RR1) || (byte == C_REJ0) || (byte == C_REJ1))
                 {
                     s = C_RCV;
@@ -339,10 +322,10 @@ int stateMachine(unsigned char byte, enum state s, enum machine_state ms, LinkLa
                 }
                 else
                 {
-                    s = START;  //There was an error, must go back to the initial state
+                    s = START;
                 }
                 break;
-            case READ: // i.e: read treats packets sent by LLWRITE()
+            case READ: 
                 if ((byte == C_FRAME0) || (byte == C_FRAME1))
                 {
                     s = C_RCV;
@@ -353,7 +336,6 @@ int stateMachine(unsigned char byte, enum state s, enum machine_state ms, LinkLa
                 }
                 break;
             case CLOSE:
-                // ou seja: DISC aceita, mas só aceitar UA se for o Rx a ler (ou seja, o Tx mandou)
                 if (byte == C_DISC)
                 {
                     if (role == LlTx)
@@ -361,7 +343,6 @@ int stateMachine(unsigned char byte, enum state s, enum machine_state ms, LinkLa
                         s = STOP;
                         return 0;
                     }
-
                 }
                 else if (byte == C_UA) {
                     if (role == LlRx) {
@@ -369,7 +350,6 @@ int stateMachine(unsigned char byte, enum state s, enum machine_state ms, LinkLa
                         return 0;
                     }
                 }
-
             default:
                 return 1;
             }
@@ -404,33 +384,25 @@ int stateMachine(unsigned char byte, enum state s, enum machine_state ms, LinkLa
                 }
                 break;
             case READ:
-                // CHECK NS (TX_FN): If NS is the expected (new frame, no duplicate) then GO, else RR(NS)
-                // se for o expectavel (tx_fn tem de ser igual ao da trama atual)
                 if (tx_fn == (c != 0))
                 {
-                    // save data to be processed by llread()
                     if (byte == FLAG)
                     {
-                        // HALT
                         s = STOP;
-
                         p[p_index] = byte;
                         p_index++;
-
-                        // Copy stuffed payload into global buffer and record its length
                         memcpy(rx_packet, p, p_index);
                         rx_packet_len = (unsigned int)p_index;
                     }
                     else
                     {
-                        // keep reading
                         p[p_index] = byte;
                         p_index++;
                     }
                 }
                 else
                 {
-                    return 1;   // ignore or send RR(Ns)
+                    return 1;
                 }
                 break;
             default:
@@ -448,22 +420,19 @@ int stateMachine(unsigned char byte, enum state s, enum machine_state ms, LinkLa
     return 0;
 }
 
-////////////////////////////////////////////////
-// LLOPEN
-////////////////////////////////////////////////
 int llopen(LinkLayer connectionParameters)
 {
     unsigned char byte;
     serialPort = connectionParameters.serialPort;
     int baudRate = connectionParameters.baudRate;
     x_role = connectionParameters.role;
-
+    n_tries = connectionParameters.nRetransmissions;
+    timeout = connectionParameters.timeout;
     if (openSerialPort(serialPort, baudRate) < 0)
     {
         perror("openSerialPort");
         exit(-1);
     }
-
     switch (connectionParameters.role)
     {
     case LlTx:
@@ -474,87 +443,56 @@ int llopen(LinkLayer connectionParameters)
             perror("sigaction");
             exit(1);
         }
-
-        // Write Set
         if (txAlarm(&byte, ALARM_OPEN))
         {
             return 1;
         };
-
-        // Read UA
         stateMachine(byte, START, OPEN, x_role, A_REPLY);
         break;
     case LlRx:
-        // Read Set
         readByteSerialPort(&byte);
         stateMachine(byte, START, OPEN, x_role, A_COMMAND);
-
-        // Write Ua
         writeUa(A_REPLY);
         break;
     default:
         return 1;
     }
-
-    printf("[SM] LLOPEN() WAS SUCCESSFUL!\n");
     return 0;
 }
 
-////////////////////////////////////////////////
-// LLWRITE
-////////////////////////////////////////////////
 int llwrite(const unsigned char *buf, int bufSize)
 {
-    // tamanho do vetor 2*max_payload_size + 6
-    // max_payload_size é 1000
-    // caso todos os caracteres sejam flag,sera necessario fazer o byte stuffing de todos eles, o que faria com que o tamanho duplicasse
-    // a somar a tudo isto, o vetor precisa de mais 6 bytes para as flags
-
     int countframe = 0;
     unsigned char bcc2 = 0x00;
-
-    // CONFIGURAR AS FLAGS ANTES DO DATA
     unsigned int frame_size = 0;
     unsigned char frame[(2 * MAX_PAYLOAD_SIZE) + 6] = {0};
     frame[0] = FLAG;
     frame[1] = A_TX_C;
-
     if (countframe == 0)
     {
         frame[2] = C_FRAME0;
         countframe = 1;
-        frame[3] = A_TX_C ^ C_FRAME0; // BCC1
+        frame[3] = A_TX_C ^ C_FRAME0; 
     }
     else
     {
         frame[2] = C_FRAME1;
         countframe = 0;
-        frame[3] = A_TX_C ^ C_FRAME1; // BCC1
+        frame[3] = A_TX_C ^ C_FRAME1; 
     }
     frame_size = 4;
-
-    // PERCORRER OS DADOS E FAZER O BYTE STUFFING
     unsigned char currentByte;
-
-    // Percorrer os dados e fazer o byte stuffing
     for (int i = 0; i < bufSize; i++)
     {
         currentByte = buf[i];
-        bcc2 ^= currentByte; // calcular BCC
+        bcc2 ^= currentByte;
         byte_stuffing(&currentByte, frame, &frame_size);
     }
-
-    // adiciona o BCC2 e faz o stuffing do BCC2
     byte_stuffing(&bcc2, frame, &frame_size);
     frame[frame_size++] = 0x7E;
-    // O VETOR ESTA PRONTO
-
-    // Escrever Frame e Receber o READ
     unsigned char byte;
     tx_buf_size = frame_size;
     tx_frame = frame;
-
-    // implementar alarm e esperar pelo read (ACK)
     struct sigaction act = {0};
     act.sa_handler = &alarmHandler;
     if (sigaction(SIGALRM, &act, NULL) == -1)
@@ -562,28 +500,21 @@ int llwrite(const unsigned char *buf, int bufSize)
         perror("sigaction");
         exit(1);
     }
-
-    // write I and expect ACK
-    if (txAlarm(&byte, ALARM_WRITE))
-        return 1;
-
+    if (txAlarm(&byte, ALARM_WRITE)) return 1;
     return 0;
 }
 
-// Used to escape the flags inside a frame
-// Receives a byte, a vector and it's current size
-// Appends the stuffed byte to the vector and updated its size
 void byte_stuffing(unsigned char *currentbyte, unsigned char *vector, unsigned int *size)
 {
     if (*currentbyte == FLAG)
     {
-        vector[*size] = 0x7D; // ESC
+        vector[*size] = 0x7D;
         vector[*size + 1] = 0x5E;
         (*size) += 2;
     }
     else if (*currentbyte == 0x7D)
     {
-        vector[*size] = 0x7D; // ESC
+        vector[*size] = 0x7D;
         vector[*size + 1] = 0x5D;
         (*size) += 2;
     }
@@ -594,31 +525,24 @@ void byte_stuffing(unsigned char *currentbyte, unsigned char *vector, unsigned i
     }
 }
 
-////////////////////////////////////////////////
-// LLREAD
-////////////////////////////////////////////////
 int llread(unsigned char *packet)
 {
     unsigned char byte;
     readByteSerialPort(&byte);
-
     if (stateMachine(byte, START, READ, x_role, 0))
     {
         writeREJ();
         return -1;
     }
-
     int flag = 0;
-    unsigned int index = 0, size = 0; // destuffed payload size will be stored in 'size'
-
+    unsigned int index = 0, size = 0;
     while (flag != 1)
     {
         if (size >= (MAX_PAYLOAD_SIZE * 2 + 6))
             return 1;
         flag = byte_destuffing(rx_packet, &index, &size);
     }
-
-    if (checkBCC2(rx_packet, size)) // bcc2 not correct
+    if (checkBCC2(rx_packet, size))
     {
         writeREJ();
         return -1;
@@ -633,13 +557,10 @@ int llread(unsigned char *packet)
     }
 }
 
-// Used to destuff the frame on the receiver side
-// Receives a packet, it's size, and the current size of the destuffed packet
-// Destuffs the byte at the given index of the packet given. Retuns 0 if there wasn't any errors, returns -1 otherwise
 int byte_destuffing(unsigned char *rx_packet, unsigned int *index, unsigned int *size)
 {
     if (rx_packet[*index] == 0x7D)
-    { // se detetar 0x7D inspeciona o proximo byte
+    {
         if (*index + 1 >= (MAX_PAYLOAD_SIZE * 2 + 6))
             return -1;
         if ((rx_packet[*index + 1] == 0x5E))
@@ -660,37 +581,27 @@ int byte_destuffing(unsigned char *rx_packet, unsigned int *index, unsigned int 
         (*size)++;
         (*index)++;
     }
-
     return 0;
 }
 
 int checkBCC2(unsigned char *rx_packet, int size)
 {
     unsigned char bcc2_acc = 0;
-
     for (int i = 0; i < size; i++)
     {
         unsigned char byte = rx_packet[i];
         bcc2_acc ^= byte;
     }
-
-    // i.e: tem de ser 0 porque o último byte foi o BCC2, pelo que se estiver certo (sum DATA ^ BCC2 = 0)
-    // um pacote XOR com ele próprio dá 0...
     if (bcc2_acc == 0) return 0;
     return 1;
 }
 
-
-////////////////////////////////////////////////
-// LLCLOSE
-////////////////////////////////////////////////
 int llclose()
 {
     unsigned char byte;
     switch (x_role)
     {
     case LlTx:
-
         struct sigaction act = {0};
         act.sa_handler = &alarmHandler;
         if (sigaction(SIGALRM, &act, NULL) == -1)
@@ -698,46 +609,29 @@ int llclose()
             perror("sigaction");
             exit(1);
         }
-
-        // Write DISC (0x03)
         if (txAlarm(&byte, ALARM_CLOSE))
         {
             return 1;
         };
-
-        // Read DISC
         readByteSerialPort(&byte);
         stateMachine(byte, A_RCV, CLOSE, x_role, A_REPLY);
-
-        // Write UA
         writeUa(A_REPLY);
-
         break;
 
     case LlRx:
-        // Confirm Read DISC
         readByteSerialPort(&byte);
         stateMachine(byte, A_RCV, CLOSE, x_role, A_COMMAND);
-
-        // Write DISC (0x01)
         writeDisc(A_COMMAND);
-
-        // Confirm Read UA
         readByteSerialPort(&byte);
         stateMachine(byte, A_RCV, CLOSE, x_role, A_REPLY);
-
         break;
     default:
         return 1;
     }
-
     if (closeSerialPort() < 0)
     {
         perror("closeSerialPort");
         exit(-1);
     }
-
-    printf("[SM] LLCLOSE() WAS SUCCESSFUL!\n");
-
     return 0;
 }
