@@ -28,18 +28,23 @@ char buf[BUFFER_SIZE];
 
 int main(int argc, char *argv[]) {
     // Valida argumentos
+    /*
     if (argc < 3) {
         fprintf(stderr, "Uso: %s <servidor> <arquivo_local>\n", argv[0]);
         fprintf(stderr, "Exemplo: %s ftp.example.com download.zip\n", argv[0]);
         return EXIT_FAILURE;
     }
     
+    
     domain = argv[1];
     path = argv[2];
     
+    */
+
+
     // Abre arquivo para escrita (binário)
     // 0644 = permissões: dono lê+escreve, outros só leem
-    filefd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    filefd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (filefd == -1) {
         perror("Erro ao criar arquivo");
         return EXIT_FAILURE;
@@ -92,6 +97,40 @@ int download_file(void) {
     printf("\nDownload Complete: %ld bytes\n", total_bytes);
     
     if (bytes_received < 0) return 1;
+    
+    return 0;
+}
+
+
+int ftp_send_command(int sockfd, const char *command, char *response, int resp_size) {
+    char cmd[256]; //hardcoded por enquanto
+    char buffer[1024]; //hardcoded por enquanto
+    ssize_t nbytes;
+    
+    // Adicionar \r\n ao comando
+    snprintf(cmd, sizeof(cmd), "%s\r\n", command);
+    
+    // Enviar o comando
+    if (send(sockfd, cmd, strlen(cmd), 0) < 0) {
+        return -1;
+    }
+    
+    // Receber resposta (uma linha)
+    nbytes = recv(sockfd, buffer, sizeof(buffer) - 1, 0);
+    if (nbytes <= 0) {
+        return -1;
+    }
+    
+    buffer[nbytes] = '\0';
+    
+    // Copiar a resposta para um buffer
+    if (response && resp_size > 0) {
+        strncpy(response, buffer, resp_size - 1);
+        response[resp_size - 1] = '\0';
+    }
+    
+    printf("> %s", cmd);
+    printf("< %s", buffer);
     
     return 0;
 }
