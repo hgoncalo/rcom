@@ -313,9 +313,9 @@ int main(int argc, char *argv[]) {
 
     // RETR
     snprintf(command_buf, sizeof(command_buf), "RETR %s", ftp.path);
-    if ((ftp_send_command(sockfd, command_buf, response, sizeof(response)) != 0) || (strncmp(response, "150", 3) != 0))
+    if ((ftp_send_command(sockfd, command_buf, response, sizeof(response)) != 0) || ((strncmp(response, "150", 3) != 0) && (strncmp(response, "125", 3) != 0)))
     {
-        printf("Erro: Não foi possível ativar o PASV\n");
+        printf("Erro: Não foi possível ativar o RETR\n");
         close(datasockfd);
         close(sockfd);
         return -1;
@@ -329,17 +329,19 @@ int main(int argc, char *argv[]) {
         close(sockfd);
         return -1;
     }
+    close(datasockfd);
 
-    if ((read_line(sockfd, response, sizeof(response)) < 0) || (strncmp(response, "226", 3) != 0))
+    if ((read_line(sockfd, response, sizeof(response)) < 0) || ((strncmp(response, "226", 3) != 0) && (strncmp(response, "250", 3) != 0)))
     {
         printf("Erro: Transferência não foi completa.\n");
+        close(sockfd);
+        return -1;
     }
 
     // QUIT
     if ((ftp_send_command(sockfd, "QUIT", response, sizeof(response)) != 0) || (strncmp(response, "221", 3) != 0))
     {
         printf("Erro: Houve problema ao sair\n");
-        close(datasockfd);
         close(sockfd);
         return -1;
     }
@@ -349,7 +351,7 @@ int main(int argc, char *argv[]) {
         close(datasockfd);
     }
 
-    if (sockfd > 0)
+    if (sockfd != -1)
     {
         close(sockfd);
     }
